@@ -1,0 +1,24 @@
+name: Vehicle
+version: '${project.version}'
+main: com.CodDev.vehicle.VehiclePlugin
+api-version: '1.21'
+author: CodDev
+description: Drivable vehicles with Blockbench models - WASD driving, seats, hitbox and crash physics, generated resource pack.
+commands:
+  vehicle:
+    description: Create, edit, spawn and remove vehicles
+    aliases: [veh, vehicles]
+    usage: |
+      /vehicle create <id> [model]
+      /vehicle edit <id> <property> <value...>
+      /vehicle spawn <id>
+      /vehicle remove [radius|all]
+      /vehicle delete <id>
+      /vehicle list | info <id> | models | give <player> <id> [amount] | pack | reload
+permissions:
+  vehicle.admin:
+    description: Create, edit, spawn and remove vehicles
+    default: op
+  vehicle.use:
+    description: Ride vehicles and use vehicle items
+    default: true

@@ -1,0 +1,45 @@
+# Vehicle plugin configuration
+#
+# Models: put your Blockbench files into plugins/Vehicle/models/<name>.bbmodel and restart the server
+# (or run /vehicle pack). Every file becomes a model named after the file (without .bbmodel).
+# The resource pack is written to plugins/Vehicle/generated/Vehicle-pack.zip - host it yourself and
+# point your server.properties resource-pack / resource-pack-sha1 at it (sha1 is in Vehicle-pack.sha1).
+
+# The vanilla item whose look is replaced by the vehicle models (players never see it, only its models).
+base-item: minecraft:turtle_scute
+
+# Global rider height nudge in blocks, added to every seat's y. Per-seat y is set with /vehicle edit.
+seat-rider-offset: 0.6
+
+# Sneak + right-click an EMPTY vehicle you own (or any vehicle with vehicle.admin) to pick it up as an item.
+pickup-enabled: true
+
+# Vehicle items given with /vehicle give are consumed when placed (creative players keep theirs).
+consume-item-on-place: true
+
+pack:
+  description: "Vehicle models (generated)"
+  min-format: 46
+  max-format: 999
+
+crash:
+  # Bumping into something slower than this (blocks/s) is harmless.
+  min-speed: 4.0
+  # Vehicle health lost per block/s of impact speed.
+  vehicle-damage: 1.5
+  # Damage (half-hearts) riders take per block/s above min-speed.
+  rider-damage: 0.6
+  # Damage dealt to mobs/players that get rammed, per block/s of vehicle speed.
+  ram-damage: 0.8
+  # Vehicle health lost per block fallen beyond 3 blocks.
+  fall-damage: 4.0
+  # Vehicles explode (particles + sound, no block damage) and disappear when their health reaches 0.
+  destroy-at-zero-health: true
+
+drive:
+  # Show "speed | health" on the driver's action bar.
+  speedometer: true
+  # Riders who leave step out beside the vehicle instead of on top of it.
+  exit-beside: true
+  # Speed factor while the vehicle is in water.
+  water-speed-factor: 0.3
