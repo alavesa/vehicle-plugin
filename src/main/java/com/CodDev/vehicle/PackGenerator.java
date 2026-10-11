@@ -265,11 +265,19 @@ public final class PackGenerator {
         // --- cubes
         Map<String, Cube> cubes = new LinkedHashMap<>();
         int meshes = 0;
+        List<String> meshNames = new ArrayList<>();
         if (root.has("elements")) for (JsonElement ee : root.getAsJsonArray("elements")) {
             JsonObject e = ee.getAsJsonObject();
-            if (e.has("type") && !"cube".equals(str(e.get("type"), "cube"))) { meshes++; continue; }
             if (e.has("visibility") && !e.get("visibility").getAsBoolean()) continue;
             if (e.has("export") && !e.get("export").getAsBoolean()) continue;
+            if (e.has("type") && "mesh".equals(str(e.get("type"), "cube"))) {
+                // Blockbench MESH (cylinder wheels, bevels...): Java item models only hold cubes - use its bounding box
+                // so the part exists, and report it (rebuild from cubes for the real shape).
+                Cube m = meshBox(e, cubes.size());
+                if (m != null) { cubes.put(m.uuid, m); meshes++; meshNames.add(m.name); }
+                continue;
+            }
+            if (e.has("type") && !"cube".equals(str(e.get("type"), "cube"))) continue;
             if (!e.has("from") || !e.has("to")) continue;
             Cube c = new Cube();
             c.uuid = str(e.get("uuid"), "e" + cubes.size());
@@ -284,7 +292,7 @@ public final class PackGenerator {
             c.faces = e.has("faces") && e.get("faces").isJsonObject() ? e.getAsJsonObject("faces") : new JsonObject();
             cubes.put(c.uuid, c);
         }
-        if (meshes > 0) warnings.add(name + ": " + meshes + " mesh element(s) skipped - Java item models only support cubes (convert meshes to cubes in Blockbench)");
+        if (meshes > 0) warnings.add(name + ": " + meshes + " MESH element(s) " + meshNames + " shown as their bounding boxes - Java item models only hold cubes; rebuild wheels/round parts from cubes for the real shape");
         if (cubes.isEmpty()) throw new IOException("no cube elements");
 
         // --- bones (outliner groups)
@@ -415,10 +423,18 @@ public final class PackGenerator {
      *  the Java range (the wrapper's display scale compensates), the cube's own exact 90-degree part applied. */
     private void writePartGeometry(String name, String geom, Part part, JsonObject textures, Map<String, Integer> texIndex, List<double[]> texRes) {
         double[] shift = {8 - part.pivot[0], 8 - part.pivot[1], 8 - part.pivot[2]};
+        // extents from the corners AS WRITTEN (the cube's exact 90-degree part applied about its own origin): a cube
+        // rotated 90 deg around a far pivot lands elsewhere, and one coordinate outside the Java range makes the client
+        // reject the whole part (a purple cube in the wrong place)
         double far = 0;
-        for (Cube c : part.cubes) for (int i = 0; i < 3; i++) {
-            far = Math.max(far, Math.abs(c.from[i] - c.inflate + shift[i] - 8));
-            far = Math.max(far, Math.abs(c.to[i] + c.inflate + shift[i] - 8));
+        for (Cube c : part.cubes) {
+            int[][] Pe = part.soloCube == c ? identityPerm() : nearestPerm(rot3(c.rotation));
+            for (int corner = 0; corner < 8; corner++) {
+                double[] v = { ((corner & 1) == 0 ? c.from[0] - c.inflate : c.to[0] + c.inflate) - c.origin[0],
+                               ((corner & 2) == 0 ? c.from[1] - c.inflate : c.to[1] + c.inflate) - c.origin[1],
+                               ((corner & 4) == 0 ? c.from[2] - c.inflate : c.to[2] + c.inflate) - c.origin[2] };
+                for (int i = 0; i < 3; i++) far = Math.max(far, Math.abs(Pe[i][0]*v[0]+Pe[i][1]*v[1]+Pe[i][2]*v[2] + c.origin[i] + shift[i] - 8));
+            }
         }
         part.k = far > 23.9 ? 23.9 / far : 1.0;
         JsonArray elements = new JsonArray();
@@ -447,6 +463,7 @@ public final class PackGenerator {
                 if (!anyUv) srcFaces = boxUvFaces(c, srcFaces);
             }
             JsonObject cfaces = remapFaces(srcFaces, Pe);
+            for (int i = 0; i < 3; i++) { lo[i] = Math.max(-16, Math.min(32, lo[i])); hi[i] = Math.max(-16, Math.min(32, hi[i])); }
             JsonObject e = new JsonObject();
             e.add("from", arr(lo));
             e.add("to", arr(hi));
@@ -600,6 +617,33 @@ public final class PackGenerator {
     }
 
     /** Box-UV fallback (Bedrock/GeckoLib style models whose faces carry no uv): the classic Minecraft layout. */
+    /** Bounding-box cube for a Blockbench mesh element (vertices are relative to its origin). */
+    private static Cube meshBox(JsonObject e, int index) {
+        if (!e.has("vertices") || !e.get("vertices").isJsonObject()) return null;
+        double[] mn = {1e9, 1e9, 1e9}, mx = {-1e9, -1e9, -1e9};
+        for (var v : e.getAsJsonObject("vertices").entrySet()) {
+            if (!v.getValue().isJsonArray()) continue;
+            double[] p = vec(v.getValue());
+            for (int i = 0; i < 3; i++) { mn[i] = Math.min(mn[i], p[i]); mx[i] = Math.max(mx[i], p[i]); }
+        }
+        if (mn[0] > mx[0]) return null;
+        Cube c = new Cube();
+        c.uuid = str(e.get("uuid"), "m" + index);
+        c.name = str(e.get("name"), "mesh");
+        c.origin = e.has("origin") ? vec(e.get("origin")) : new double[]{0, 0, 0};
+        if (e.has("rotation")) c.rotation = vec(e.get("rotation"));
+        c.from = new double[]{ c.origin[0] + mn[0], c.origin[1] + mn[1], c.origin[2] + mn[2] };
+        c.to = new double[]{ c.origin[0] + mx[0], c.origin[1] + mx[1], c.origin[2] + mx[2] };
+        for (int i = 0; i < 3; i++) if (c.to[i] - c.from[i] < 0.05) c.to[i] = c.from[i] + 0.05;
+        JsonElement tex = null;
+        if (e.has("faces") && e.get("faces").isJsonObject())
+            for (var f : e.getAsJsonObject("faces").entrySet()) if (f.getValue().isJsonObject() && f.getValue().getAsJsonObject().has("texture")) { tex = f.getValue().getAsJsonObject().get("texture"); break; }
+        c.faces = new JsonObject();
+        for (String f : FACE) { JsonObject face = new JsonObject(); face.add("texture", tex == null ? new com.google.gson.JsonPrimitive(0) : tex); c.faces.add(f, face); }
+        c.boxUv = false;
+        return c;
+    }
+
     private static JsonObject boxUvFaces(Cube c, JsonObject faces) {
         double dx = Math.abs(c.to[0] - c.from[0]), dy = Math.abs(c.to[1] - c.from[1]), dz = Math.abs(c.to[2] - c.from[2]);
         double u = c.uvOffset[0], v = c.uvOffset[1];
