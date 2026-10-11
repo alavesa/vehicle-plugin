@@ -275,7 +275,7 @@ public final class VehicleManager {
                 d.addScoreboardTag(TAG_BODY);
                 d.setPersistent(true);
                 d.setBillboard(Display.Billboard.FIXED);
-                d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE);
+                d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);   // composite parts carry their pose in display.fixed
                 d.setTeleportDuration(1);
                 d.setInterpolationDuration(0);
                 d.setShadowRadius(0f);
@@ -353,6 +353,7 @@ public final class VehicleManager {
     /** Item + transformation of the body for a type (model fit scale compensated, Blockbench origin at the base). */
     public void applyBody(ItemDisplay d, VehicleType type) {
         d.setItemStack(modelItem(type.model));
+        d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
         PackGenerator.ModelInfo mi = plugin.modelInfo(type.model);
         double inv = mi != null ? 1.0 / mi.fitScale() : 1.0;
         double tx = mi != null ? mi.tx() : 0.5, ty = mi != null ? mi.ty() : 0.5, tz = mi != null ? mi.tz() : 0.5;

@@ -18,6 +18,9 @@ pickup-enabled: true
 consume-item-on-place: true
 
 pack:
+  # composite (default): every Blockbench group and every freely rotated cube is its own sub-model placed by an
+  # exact display transform - no 22.5 degree rounding, no shrinking of big models. baked: the old single-model mode.
+  mode: composite
   description: "Vehicle models (generated)"
   min-format: 46
   max-format: 999

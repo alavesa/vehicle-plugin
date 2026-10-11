@@ -52,6 +52,8 @@ public final class PackGenerator {
     private final List<String> warnings = new ArrayList<>();
     private final Map<String, byte[]> files = new LinkedHashMap<>();
     private final Map<String, String> cmdToModel = new LinkedHashMap<>();
+    /** composite mode: model name -> wrapper paths (one per group / free-rotated cube), shown as minecraft:composite. */
+    private final Map<String, List<String>> compositeParts = new LinkedHashMap<>();
     private final Map<String, ModelInfo> infos = new LinkedHashMap<>();
     private final List<String> report = new ArrayList<>();
 
@@ -154,9 +156,28 @@ public final class PackGenerator {
     private void itemsFile(String base) {
         JsonArray cases = new JsonArray();
         for (var e : cmdToModel.entrySet()) {
-            if (!files.containsKey("assets/" + NS + "/models/item/" + e.getValue() + ".json")) continue;
+            List<String> parts = compositeParts.get(e.getKey());
             JsonObject c = new JsonObject();
             c.addProperty("when", e.getKey());
+            if (parts != null) {
+                JsonObject comp = new JsonObject();
+                comp.addProperty("type", "minecraft:composite");
+                JsonArray models = new JsonArray();
+                for (String part : parts) {
+                    if (!files.containsKey("assets/" + NS + "/models/item/" + part + ".json")) continue;
+                    JsonObject m = new JsonObject();
+                    m.addProperty("type", "minecraft:model");
+                    m.addProperty("model", NS + ":item/" + part);
+                    models.add(m);
+                }
+                if (models.isEmpty()) continue;
+                comp.add("models", models);
+                c.add("model", comp);
+                cases.add(c);
+                report.add("  \"" + e.getKey() + "\" -> composite of " + models.size() + " part(s) (exact rotations)");
+                continue;
+            }
+            if (!files.containsKey("assets/" + NS + "/models/item/" + e.getValue() + ".json")) continue;
             JsonObject m = new JsonObject();
             m.addProperty("type", "minecraft:model");
             m.addProperty("model", NS + ":item/" + e.getValue());
@@ -270,12 +291,21 @@ public final class PackGenerator {
         Map<String, Bone> bones = new HashMap<>();
         if (root.has("outliner")) for (JsonElement oe : root.getAsJsonArray("outliner")) parseOutliner(oe, null, bones, cubes);
 
-        // --- fit into the Java range [-16, 32] (always centred so the display translation is exact)
         double[] mn = {1e9, 1e9, 1e9}, mx = {-1e9, -1e9, -1e9};
         for (Cube c : cubes.values()) for (int i = 0; i < 3; i++) {
             mn[i] = Math.min(mn[i], Math.min(c.from[i], c.to[i]) - c.inflate);
             mx[i] = Math.max(mx[i], Math.max(c.from[i], c.to[i]) + c.inflate);
         }
+        if (!plugin.getConfig().getString("pack.mode", "composite").equalsIgnoreCase("baked")) {
+            // COMPOSITE: every group (and every cube with a free rotation angle) is its own sub-model whose display
+            // transform carries the EXACT rotation and position; no 22.5-degree rounding, no global shrinking.
+            int parts = emitComposite(name, mpath, cubes, bones, textures, texIndex, texRes);
+            cmdToModel.put(name, mpath + "__p0");
+            infos.put(name, new ModelInfo(name, mpath, 1.0, 0, 0, 0, cubes.size(), mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]));
+            report.add(name + ": " + cubes.size() + " cubes, " + ti + " texture(s), size " + Math.round(mx[0] - mn[0]) + "x" + Math.round(mx[1] - mn[1]) + "x" + Math.round(mx[2] - mn[2]) + " px, " + parts + " composite part(s), rotations exact");
+            return;
+        }
+        // --- baked mode: fit into the Java range [-16, 32] (always centred so the display translation is exact)
         double extent = Math.max(mx[0] - mn[0], Math.max(mx[1] - mn[1], mx[2] - mn[2]));
         double scale = 1.0;
         double[] shift = {0, 0, 0};
@@ -298,6 +328,173 @@ public final class PackGenerator {
         infos.put(name, new ModelInfo(name, mpath, S, T[0], T[1], T[2], cubes.size(), mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]));
         report.add(name + ": " + cubes.size() + " cubes, " + ti + " texture(s), size " + Math.round(mx[0] - mn[0]) + "x" + Math.round(mx[1] - mn[1]) + "x" + Math.round(mx[2] - mn[2]) + " px"
             + (S < 1 ? " (fitted x" + Math.round(S * 1000) / 1000.0 + ", display compensates)" : ""));
+    }
+
+    // ------------------------------------------------------------------ composite mode
+
+    private static final class Part {
+        Bone bone; double[] pivot; double[][] extra = identity(); Cube soloCube; List<Cube> cubes = new ArrayList<>(); double k = 1; String suffix;
+    }
+
+    /** Can a Java element hold this cube's rotation exactly (one axis, multiple of 22.5, |a| <= 45)? */
+    private static boolean exactRotation(Cube c) {
+        if (c.rotation[0] == 0 && c.rotation[1] == 0 && c.rotation[2] == 0) return true;
+        double[][] R = rot3(c.rotation);
+        int[][] P = nearestPerm(R);
+        double[] e = euler3(mul3(transpose3(P), R));
+        int a = 0;
+        for (int i = 1; i < 3; i++) if (Math.abs(e[i]) > Math.abs(e[a])) a = i;
+        for (int i = 0; i < 3; i++) if (i != a && Math.abs(e[i]) > 0.5) return false;
+        double snapped = Math.round(e[a] / 22.5) * 22.5;
+        return Math.abs(e[a] - snapped) < 0.5 && Math.abs(snapped) <= 45;
+    }
+
+    /** Exact rest-pose world matrix of a group: chain of T(origin) * R(rotation) * T(-origin). */
+    private static double[][] world(Bone b, Map<Bone, double[][]> cache) {
+        if (b == null) return identity();
+        double[][] w = cache.get(b);
+        if (w != null) return w;
+        double[][] local = mul(mul(translate(b.origin[0], b.origin[1], b.origin[2]), rotZYX(b.rotation)), translate(-b.origin[0], -b.origin[1], -b.origin[2]));
+        w = b.parent == null ? local : mul(world(b.parent, cache), local);
+        cache.put(b, w);
+        return w;
+    }
+
+    private int emitComposite(String name, String mpath, Map<String, Cube> cubes, Map<String, Bone> bones, JsonObject textures,
+                              Map<String, Integer> texIndex, List<double[]> texRes) {
+        Bone root = new Bone(); root.name = "root"; root.uuid = "__root"; root.origin = new double[]{8, 8, 8};
+        Map<Bone, Part> byBone = new LinkedHashMap<>();
+        List<Part> parts = new ArrayList<>();
+        int solo = 0;
+        for (Cube c : cubes.values()) {
+            Bone b = c.bone == null ? root : c.bone;
+            if (!exactRotation(c)) {
+                Part sp = new Part(); sp.bone = b; sp.soloCube = c; sp.pivot = c.origin.clone();
+                sp.extra = mul(mul(translate(c.origin[0], c.origin[1], c.origin[2]), rotZYX(c.rotation)), translate(-c.origin[0], -c.origin[1], -c.origin[2]));
+                sp.cubes.add(c); sp.suffix = "c" + (solo++); parts.add(sp);
+                continue;
+            }
+            Part part = byBone.get(b);
+            if (part == null) { part = new Part(); part.bone = b; part.pivot = b.origin.clone(); part.suffix = "" + byBone.size(); byBone.put(b, part); parts.add(part); }
+            part.cubes.add(c);
+        }
+        if (solo > 0) report.add(name + ": " + solo + " cube(s) with a free rotation angle became their own exact part");
+        Map<Bone, double[][]> cache = new HashMap<>();
+        List<String> wrappers = new ArrayList<>();
+        int clampedPivots = 0;
+        for (Part part : parts) {
+            String geom = mpath + "__g" + part.suffix, wrap = mpath + "__p" + part.suffix;
+            writePartGeometry(name, geom, part, textures, texIndex, texRes);
+            double[][] M = mul(world(part.bone, cache), part.extra);
+            double[] Pw = apply(M, part.pivot);
+            double[][] Rw = {{M[0][0], M[0][1], M[0][2]}, {M[1][0], M[1][1], M[1][2]}, {M[2][0], M[2][1], M[2][2]}};
+            double[] eul = eulerXYZ(Rw);
+            // FIXED context: 16 px = 1 block; the group's pivot (Blockbench px) IS the display translation, so
+            // Blockbench (0,0,0) lands on the entity position. Translation is clamped by the client at +-80 px.
+            double[] tr = new double[3];
+            for (int i = 0; i < 3; i++) { tr[i] = Pw[i]; if (Math.abs(tr[i]) > 80) { tr[i] = Math.max(-80, Math.min(80, tr[i])); clampedPivots++; } }
+            double sc = Math.min(4.0, 1.0 / part.k);
+            JsonObject disp = new JsonObject();
+            disp.add("fixed", transform(eul, tr, new double[]{sc, sc, sc}));
+            disp.add("gui", transform(new double[]{eul[0] + 30, eul[1] + 225, eul[2]}, new double[]{tr[0] * 0.25, tr[1] * 0.25, tr[2] * 0.25}, new double[]{sc * 0.25, sc * 0.25, sc * 0.25}));
+            disp.add("ground", transform(eul, new double[]{tr[0] * 0.25, tr[1] * 0.25 + 2, tr[2] * 0.25}, new double[]{sc * 0.25, sc * 0.25, sc * 0.25}));
+            disp.add("thirdperson_righthand", transform(eul, new double[]{tr[0] * 0.25, tr[1] * 0.25 + 3, tr[2] * 0.25 + 1}, new double[]{sc * 0.25, sc * 0.25, sc * 0.25}));
+            disp.add("firstperson_righthand", transform(eul, new double[]{tr[0] * 0.25 + 1, tr[1] * 0.25, tr[2] * 0.25 + 1}, new double[]{sc * 0.25, sc * 0.25, sc * 0.25}));
+            JsonObject w = new JsonObject();
+            w.addProperty("parent", NS + ":item/" + geom);
+            w.add("display", disp);
+            put("assets/" + NS + "/models/item/" + wrap + ".json", GSON.toJson(w));
+            wrappers.add(wrap);
+        }
+        if (clampedPivots > 0) warnings.add(name + ": " + clampedPivots + " part(s) have their pivot more than 80 px (5 blocks) from the Blockbench origin - the client cannot place them that far; move the model closer to (0,0,0)");
+        compositeParts.put(name, wrappers);
+        return parts.size();
+    }
+
+    /** One part's geometry in part-local space: pivot moved to the model centre (8,8,8), shrunk by k if it would leave
+     *  the Java range (the wrapper's display scale compensates), the cube's own exact 90-degree part applied. */
+    private void writePartGeometry(String name, String geom, Part part, JsonObject textures, Map<String, Integer> texIndex, List<double[]> texRes) {
+        double[] shift = {8 - part.pivot[0], 8 - part.pivot[1], 8 - part.pivot[2]};
+        double far = 0;
+        for (Cube c : part.cubes) for (int i = 0; i < 3; i++) {
+            far = Math.max(far, Math.abs(c.from[i] - c.inflate + shift[i] - 8));
+            far = Math.max(far, Math.abs(c.to[i] + c.inflate + shift[i] - 8));
+        }
+        part.k = far > 23.9 ? 23.9 / far : 1.0;
+        JsonArray elements = new JsonArray();
+        for (Cube c : part.cubes) {
+            boolean solo = part.soloCube == c;
+            double[][] Re = rot3(solo ? new double[]{0, 0, 0} : c.rotation);
+            int[][] Pe = nearestPerm(Re);
+            double[] eulE = euler3(mul3(transpose3(Pe), Re));
+            int ca = 0;
+            for (int i = 1; i < 3; i++) if (Math.abs(eulE[i]) > Math.abs(eulE[ca])) ca = i;
+            double cs = Math.max(-45, Math.min(45, Math.round(eulE[ca] / 22.5) * 22.5));
+            double[] lo = {1e9, 1e9, 1e9}, hi = {-1e9, -1e9, -1e9};
+            for (int corner = 0; corner < 8; corner++) {
+                double[] v = { ((corner & 1) == 0 ? c.from[0] - c.inflate : c.to[0] + c.inflate) - c.origin[0],
+                               ((corner & 2) == 0 ? c.from[1] - c.inflate : c.to[1] + c.inflate) - c.origin[1],
+                               ((corner & 4) == 0 ? c.from[2] - c.inflate : c.to[2] + c.inflate) - c.origin[2] };
+                double[] w = { Pe[0][0]*v[0]+Pe[0][1]*v[1]+Pe[0][2]*v[2] + c.origin[0], Pe[1][0]*v[0]+Pe[1][1]*v[1]+Pe[1][2]*v[2] + c.origin[1], Pe[2][0]*v[0]+Pe[2][1]*v[1]+Pe[2][2]*v[2] + c.origin[2] };
+                for (int i = 0; i < 3; i++) { double q = 8 + (w[i] + shift[i] - 8) * part.k; lo[i] = Math.min(lo[i], q); hi[i] = Math.max(hi[i], q); }
+            }
+            JsonObject srcFaces = c.faces;
+            boolean needBox = c.boxUv;
+            if (!needBox) for (String f : FACE) if (srcFaces.has(f) && srcFaces.get(f).isJsonObject() && !srcFaces.getAsJsonObject(f).has("uv")) needBox = true;
+            if (needBox) {
+                boolean anyUv = false;
+                for (String f : FACE) if (srcFaces.has(f) && srcFaces.get(f).isJsonObject() && srcFaces.getAsJsonObject(f).has("uv")) anyUv = true;
+                if (!anyUv) srcFaces = boxUvFaces(c, srcFaces);
+            }
+            JsonObject cfaces = remapFaces(srcFaces, Pe);
+            JsonObject e = new JsonObject();
+            e.add("from", arr(lo));
+            e.add("to", arr(hi));
+            if (cs != 0) {
+                JsonObject rotation = new JsonObject();
+                rotation.add("origin", arr(8 + (c.origin[0] + shift[0] - 8) * part.k, 8 + (c.origin[1] + shift[1] - 8) * part.k, 8 + (c.origin[2] + shift[2] - 8) * part.k));
+                rotation.addProperty("axis", ca == 0 ? "x" : ca == 1 ? "y" : "z");
+                rotation.addProperty("angle", cs);
+                e.add("rotation", rotation);
+            }
+            JsonObject faces = new JsonObject();
+            for (String f : FACE) {
+                if (!cfaces.has(f) || !cfaces.get(f).isJsonObject()) continue;
+                JsonObject bf = cfaces.getAsJsonObject(f);
+                JsonElement tex = bf.get("texture");
+                if (tex == null || tex.isJsonNull()) continue;
+                Integer idx = tex.isJsonPrimitive() && tex.getAsJsonPrimitive().isNumber() ? Integer.valueOf(tex.getAsInt()) : texIndex.get(tex.getAsString());
+                if (idx == null || idx >= texRes.size()) idx = 0;
+                double[] res = texRes.get(idx);
+                double[] uv = bf.has("uv") && bf.get("uv").isJsonArray() ? vec4(bf.get("uv")) : new double[]{0, 0, res[0], res[1]};
+                JsonObject face = new JsonObject();
+                face.add("uv", arr(uv[0] * 16 / res[0], uv[1] * 16 / res[1], uv[2] * 16 / res[0], uv[3] * 16 / res[1]));
+                face.addProperty("texture", "#" + idx);
+                if (bf.has("rotation")) { int r = ((int) num(bf.get("rotation"), 0) % 360 + 360) % 360; if (r != 0) face.addProperty("rotation", r); }
+                faces.add(f, face);
+            }
+            e.add("faces", faces);
+            elements.add(e);
+        }
+        JsonObject model = new JsonObject();
+        model.add("textures", textures);
+        model.add("elements", elements);
+        put("assets/" + NS + "/models/item/" + geom + ".json", GSON.toJson(model));
+    }
+
+    private static double[][] rotXYZ(double[] deg) {
+        double x = Math.toRadians(deg[0]), y = Math.toRadians(deg[1]), z = Math.toRadians(deg[2]);
+        double[][] rx = {{1,0,0},{0,Math.cos(x),-Math.sin(x)},{0,Math.sin(x),Math.cos(x)}};
+        double[][] ry = {{Math.cos(y),0,Math.sin(y)},{0,1,0},{-Math.sin(y),0,Math.cos(y)}};
+        double[][] rz = {{Math.cos(z),-Math.sin(z),0},{Math.sin(z),Math.cos(z),0},{0,0,1}};
+        return mul3(mul3(rx, ry), rz);
+    }
+    /** Euler angles (deg) with rotXYZ(e) == M - what Minecraft's display "rotation" expects. */
+    private static double[] eulerXYZ(double[][] m) {
+        double y = Math.asin(Math.max(-1, Math.min(1, m[0][2])));
+        double x = Math.atan2(-m[1][2], m[2][2]);
+        double z = Math.atan2(-m[0][1], m[0][0]);
+        return new double[]{ Math.toDegrees(x), Math.toDegrees(y), Math.toDegrees(z) };
     }
 
     private static void parseOutliner(JsonElement oe, Bone parent, Map<String, Bone> bones, Map<String, Cube> cubes) {
