@@ -21,6 +21,8 @@ pack:
   # composite (default): every Blockbench group and every freely rotated cube is its own sub-model placed by an
   # exact display transform - no 22.5 degree rounding, no shrinking of big models. baked: the old single-model mode.
   mode: composite
+  frame-ticks: 1         # animation frames: one per tick unless the animation has Blockbench snapping
+  max-frames: 40         # cap per animation
   description: "Vehicle models (generated)"
   min-format: 46
   max-format: 999
@@ -40,6 +42,7 @@ crash:
   destroy-at-zero-health: true
 
 drive:
+  animation-follows-speed: true   # the drive animation runs faster at higher speed
   # Show "speed | health" on the driver's action bar.
   speedometer: true
   # Riders who leave step out beside the vehicle instead of on top of it.

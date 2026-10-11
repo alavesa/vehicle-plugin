@@ -20,7 +20,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
 
     private static final List<String> SUBS = List.of("create", "edit", "spawn", "remove", "delete", "list", "info", "models", "give", "pack", "reload", "help");
     private static final List<String> PROPS = List.of("name", "model", "speed", "acceleration", "brake", "reverse", "friction", "turn", "grip",
-        "scale", "modelyaw", "offset", "hitbox", "stepheight", "health", "crash", "crashdamage", "ramdamage", "sound", "volume", "horn",
+        "scale", "modelyaw", "offset", "animation", "hitbox", "stepheight", "health", "crash", "crashdamage", "ramdamage", "sound", "volume", "horn",
         "seats", "seat", "seatsize");
 
     private final VehiclePlugin plugin;
@@ -108,6 +108,25 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
             case "grip" -> t.grip = Math.max(0.05, Math.min(1, Double.parseDouble(v[0])));
             case "scale" -> t.scale = Math.max(0.05, Math.min(50, Double.parseDouble(v[0])));
             case "modelyaw", "model-yaw", "rotation" -> t.modelYaw = Double.parseDouble(v[0]);
+            case "animation", "anim" -> {
+                String sub = v[0].toLowerCase(java.util.Locale.ROOT);
+                java.util.Set<String> names = plugin.animationNames(t.model);
+                switch (sub) {
+                    case "list" -> { ok(s, "Animations in model '" + t.model + "': " + (names.isEmpty() ? "(none - the .bbmodel has no animations, or the pack was built in baked mode)" : String.join(", ", names))); return; }
+                    case "clear", "none" -> { t.driveAnimation = ""; t.idleAnimation = ""; }
+                    case "set", "drive" -> {
+                        if (v.length < 2) { err(s, "Usage: animation set <animation name>   (animation list shows them)"); return; }
+                        t.driveAnimation = v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
+                        if (!names.contains(t.driveAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
+                    }
+                    case "idle" -> {
+                        if (v.length < 2) { err(s, "Usage: animation idle <animation name>"); return; }
+                        t.idleAnimation = v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
+                        if (!names.contains(t.idleAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
+                    }
+                    default -> { err(s, "Usage: animation set <name> | idle <name> | clear | list"); return; }
+                }
+            }
             case "offset" -> {
                 if (v.length < 3) { err(s, "Usage: offset <x> <y> <z>"); return; }
                 t.offsetX = Double.parseDouble(v[0]); t.offsetY = Double.parseDouble(v[1]); t.offsetZ = Double.parseDouble(v[2]);
@@ -292,6 +311,11 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                 if (args.length == 2) return filter(ids, args[1]);
                 if (sub.equals("edit")) {
                     if (args.length == 3) return filter(PROPS, args[2]);
+                    if (args.length == 4 && (args[2].equalsIgnoreCase("animation") || args[2].equalsIgnoreCase("anim"))) return filter(List.of("set", "idle", "clear", "list"), args[3]);
+                    if (args.length == 5 && (args[2].equalsIgnoreCase("animation") || args[2].equalsIgnoreCase("anim"))) {
+                        VehicleType tt = plugin.types().get(args[1].toLowerCase(java.util.Locale.ROOT));
+                        return tt == null ? List.of() : filter(new ArrayList<>(plugin.animationNames(tt.model)), args[4]);
+                    }
                     String prop = args[2].toLowerCase(Locale.ROOT);
                     if (args.length == 4 && prop.equals("model")) return filter(PackGenerator.scanNames(plugin), args[3]);
                     if (args.length == 4 && prop.equals("crash")) return filter(List.of("true", "false"), args[3]);

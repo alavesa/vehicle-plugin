@@ -38,6 +38,8 @@ public final class VehicleType {
     public double scale = 1.0;            // model scale
     public double modelYaw = 180.0;       // rotation of the model around the vehicle (180 = Blockbench front/north faces forward)
     public double offsetX = 0, offsetY = 0, offsetZ = 0;   // nudge the body relative to the physics base
+    public String driveAnimation = "";    // .bbmodel animation (baked by the pack) looping while the vehicle moves
+    public String idleAnimation = "";     // ... while it stands still
 
     // physics
     public double hitbox = 1.8;           // collision box width (and height) in blocks
@@ -75,6 +77,8 @@ public final class VehicleType {
         grip = s.getDouble("grip", grip);
         scale = s.getDouble("scale", scale);
         modelYaw = s.getDouble("model-yaw", modelYaw);
+        driveAnimation = s.getString("drive-animation", driveAnimation);
+        idleAnimation = s.getString("idle-animation", idleAnimation);
         offsetX = s.getDouble("offset.x", offsetX);
         offsetY = s.getDouble("offset.y", offsetY);
         offsetZ = s.getDouble("offset.z", offsetZ);
@@ -115,6 +119,8 @@ public final class VehicleType {
         s.set("grip", grip);
         s.set("scale", scale);
         s.set("model-yaw", modelYaw);
+        s.set("drive-animation", driveAnimation);
+        s.set("idle-animation", idleAnimation);
         s.set("offset.x", offsetX);
         s.set("offset.y", offsetY);
         s.set("offset.z", offsetZ);

@@ -16,6 +16,7 @@ public final class VehiclePlugin extends JavaPlugin {
     private DriveTask task;
     private Material baseItem = Material.TURTLE_SCUTE;
     private Map<String, PackGenerator.ModelInfo> models = Collections.emptyMap();
+    private Map<String, Map<String, int[]>> animations = Collections.emptyMap();
     private PackGenerator.Result lastPack;
 
     @Override
@@ -55,6 +56,7 @@ public final class VehiclePlugin extends JavaPlugin {
         try {
             lastPack = gen.generate();
             models = gen.infos();
+            animations = gen.animations();
             getLogger().info("Resource pack: " + lastPack.models() + " model(s) -> " + lastPack.zip().getPath() + " (" + (lastPack.bytes() / 1024) + " KB, sha1 " + lastPack.sha1() + ")");
             // per-cube rounding notes are only noise in the console: one line per model, details in pack-report.txt
             Map<String, Integer> rounded = new java.util.LinkedHashMap<>();
@@ -90,6 +92,9 @@ public final class VehiclePlugin extends JavaPlugin {
     public DriveTask task() { return task; }
     public Material baseItem() { return baseItem; }
     public PackGenerator.ModelInfo modelInfo(String model) { return model == null ? null : models.get(model); }
+    /** [frames, frame-ticks] of a model's animation, or null. */
+    public int[] animation(String model, String anim) { if (model == null || anim == null) return null; Map<String, int[]> m = animations.get(model); return m == null ? null : m.get(anim); }
+    public java.util.Set<String> animationNames(String model) { Map<String, int[]> m = model == null ? null : animations.get(model); return m == null ? java.util.Set.of() : m.keySet(); }
     public Map<String, PackGenerator.ModelInfo> models() { return models; }
     public PackGenerator.Result lastPack() { return lastPack; }
 }

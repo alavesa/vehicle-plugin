@@ -15,6 +15,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.GameMode;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Pig;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
@@ -36,6 +37,8 @@ public final class DriveTask implements Runnable {
 
     private static final class State {
         double speed;            // blocks per second, negative = reverse
+        int animTick;            // driving/idle animation clock
+        String lastModel;        // custom_model_data string the body currently shows
         float yaw;
         Vector momentum;         // last velocity set (blocks per tick)
         Location last;           // position at the end of the previous tick
@@ -164,6 +167,27 @@ public final class DriveTask implements Runnable {
         if (Math.abs(speed) < 0.03) speed = 0;
         st.speed = speed;
         st.yaw = yaw;
+
+        // ---- animation frames baked from the .bbmodel (drive-animation while moving, idle-animation at rest)
+        if (type.model != null && !type.model.isEmpty()) {
+            boolean moving = Math.abs(speed) > 0.3;
+            String anim = moving ? type.driveAnimation : type.idleAnimation;
+            String want = type.model;
+            if (anim != null && !anim.isEmpty()) {
+                int[] a = plugin.animation(type.model, anim);
+                if (a != null && a[0] > 0) {
+                    double rate = moving && plugin.getConfig().getBoolean("drive.animation-follows-speed", true)
+                        ? Math.max(0.35, Math.min(2.5, Math.abs(speed) / Math.max(0.1, type.maxSpeed * 0.5))) : 1.0;
+                    st.animTick += (int) Math.max(1, Math.round(rate * 1));
+                    int frame = (st.animTick / Math.max(1, a[1])) % a[0] + 1;
+                    want = type.model + "_" + anim + "_" + frame;
+                }
+            }
+            if (!want.equals(st.lastModel)) {
+                ItemDisplay body = manager.body(base);
+                if (body != null) { body.setItemStack(manager.modelItem(want)); st.lastModel = want; }
+            }
+        }
 
         // ---- velocity: momentum chases the nose (grip)
         double rad = Math.toRadians(yaw);

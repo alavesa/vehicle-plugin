@@ -54,6 +54,9 @@ public final class PackGenerator {
     private final Map<String, String> cmdToModel = new LinkedHashMap<>();
     /** composite mode: model name -> wrapper paths (one per group / free-rotated cube), shown as minecraft:composite. */
     private final Map<String, List<String>> compositeParts = new LinkedHashMap<>();
+    /** model -> animation name -> [frames, frame-ticks] (composite mode only). */
+    private final Map<String, Map<String, int[]>> animations = new LinkedHashMap<>();
+    public Map<String, Map<String, int[]>> animations() { return animations; }
     private final Map<String, ModelInfo> infos = new LinkedHashMap<>();
     private final List<String> report = new ArrayList<>();
 
@@ -123,6 +126,12 @@ public final class PackGenerator {
         put("pack-report.txt", String.join("\n", report));
         try { Files.writeString(new File(out, "pack-report.txt").toPath(), String.join("\n", report)); } catch (IOException ignored) { }
 
+        org.bukkit.configuration.file.YamlConfiguration idx = new org.bukkit.configuration.file.YamlConfiguration();
+        for (var m : animations.entrySet()) for (var c : m.getValue().entrySet()) {
+            idx.set(m.getKey() + "." + c.getKey() + ".frames", c.getValue()[0]);
+            idx.set(m.getKey() + "." + c.getKey() + ".frame-ticks", c.getValue()[1]);
+        }
+        try { idx.save(new File(out, "anim-index.yml")); } catch (IOException ignored) { }
         File zip = new File(out, "Vehicle-pack.zip");
         File tmp = new File(out, "Vehicle-pack.zip.tmp");
         long bytes = 0;
@@ -307,8 +316,52 @@ public final class PackGenerator {
         if (!plugin.getConfig().getString("pack.mode", "composite").equalsIgnoreCase("baked")) {
             // COMPOSITE: every group (and every cube with a free rotation angle) is its own sub-model whose display
             // transform carries the EXACT rotation and position; no 22.5-degree rounding, no global shrinking.
-            int parts = emitComposite(name, mpath, cubes, bones, textures, texIndex, texRes);
+            int parts = emitComposite(name, mpath, cubes, bones, textures, texIndex, texRes, null, 0, "");
             cmdToModel.put(name, mpath + "__p0");
+            // animations: every animation in the file is baked into frames <name>_<anim>_<i>; the plugin plays the one
+            // chosen with /vehicle edit <id> animation set <anim> while driving (loops), idle <anim> while standing.
+            if (root.has("animations") && root.get("animations").isJsonArray()) {
+                int frameTicks = Math.max(1, plugin.getConfig().getInt("pack.frame-ticks", 1));
+                int maxFrames = Math.max(2, plugin.getConfig().getInt("pack.max-frames", 40));
+                Map<String, int[]> clips = new LinkedHashMap<>();
+                for (JsonElement ae : root.getAsJsonArray("animations")) {
+                    JsonObject a = ae.getAsJsonObject();
+                    Clip clip = new Clip();
+                    clip.name = str(a.get("name"), "anim");
+                    clip.length = num(a.get("length"), 0);
+                    String key = clip.name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
+                    if (key.isEmpty() || clips.containsKey(key) || clip.length <= 0) continue;
+                    if (a.has("animators")) for (var en : a.getAsJsonObject("animators").entrySet()) {
+                        if (!en.getValue().isJsonObject()) continue;
+                        JsonObject an = en.getValue().getAsJsonObject();
+                        if (!an.has("keyframes")) continue;
+                        for (JsonElement ke : an.getAsJsonArray("keyframes")) {
+                            JsonObject k = ke.getAsJsonObject();
+                            String ch = str(k.get("channel"), "");
+                            if (ch.equals("rotation")) clip.rot.computeIfAbsent(en.getKey(), x -> new ArrayList<>()).add(k);
+                            else if (ch.equals("position")) clip.pos.computeIfAbsent(en.getKey(), x -> new ArrayList<>()).add(k);
+                        }
+                    }
+                    int n = 0;
+                    if (a.has("snapping")) { double snap = num(a.get("snapping"), 0); if (snap > 0) n = (int) Math.ceil(clip.length * snap); }
+                    if (n <= 0) n = (int) Math.ceil(clip.length * 20.0 / frameTicks);
+                    n = Math.max(1, Math.min(maxFrames, n));
+                    int clipTicks = Math.max(1, (int) Math.round(clip.length * 20.0 / n));
+                    for (int i = 1; i <= n; i++) {
+                        double t = n == 1 ? clip.length : (i - 1) * (clip.length / (n - 1));
+                        String suffix = "_" + key + "_" + i;
+                        emitComposite(name + suffix, mpath, cubes, bones, textures, texIndex, texRes, clip, t, suffix);
+                        cmdToModel.put(name + suffix, mpath + suffix + "__p0");
+                    }
+                    clips.put(key, new int[]{n, clipTicks});
+                }
+                if (!clips.isEmpty()) {
+                    animations.put(name, clips);
+                    StringBuilder sb = new StringBuilder(name + " animations:");
+                    for (var ce : clips.entrySet()) sb.append(' ').append(ce.getKey()).append('(').append(ce.getValue()[0]).append('x').append(ce.getValue()[1]).append(')');
+                    report.add(sb.toString());
+                }
+            }
             infos.put(name, new ModelInfo(name, mpath, 1.0, 0, 0, 0, cubes.size(), mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]));
             report.add(name + ": " + cubes.size() + " cubes, " + ti + " texture(s), size " + Math.round(mx[0] - mn[0]) + "x" + Math.round(mx[1] - mn[1]) + "x" + Math.round(mx[2] - mn[2]) + " px, " + parts + " composite part(s), rotations exact");
             return;
@@ -357,19 +410,54 @@ public final class PackGenerator {
         return Math.abs(e[a] - snapped) < 0.5 && Math.abs(snapped) <= 45;
     }
 
-    /** Exact rest-pose world matrix of a group: chain of T(origin) * R(rotation) * T(-origin). */
-    private static double[][] world(Bone b, Map<Bone, double[][]> cache) {
+    private static final class Clip {
+        String name; double length; Map<String, List<JsonObject>> rot = new HashMap<>(), pos = new HashMap<>();   // bone uuid -> keyframes
+    }
+
+    /** Linear sample of a channel's keyframes at time t (seconds); zeros if none. */
+    private static double[] sample(List<JsonObject> keys, double t) {
+        if (keys == null || keys.isEmpty()) return new double[]{0, 0, 0};
+        keys.sort((a, b) -> Double.compare(num(a.get("time"), 0), num(b.get("time"), 0)));
+        JsonObject prev = null, next = null;
+        for (JsonObject k : keys) {
+            double kt = num(k.get("time"), 0);
+            if (kt <= t) prev = k;
+            if (kt >= t) { next = k; break; }
+        }
+        if (prev == null) return point(next);
+        if (next == null || prev == next) return point(prev);
+        double t0 = num(prev.get("time"), 0), t1 = num(next.get("time"), 0);
+        double f = t1 - t0 < 1e-6 ? 0 : (t - t0) / (t1 - t0);
+        double[] a = point(prev), b = point(next);
+        return new double[]{ a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f };
+    }
+    private static double[] point(JsonObject k) {
+        if (k == null || !k.has("data_points") || !k.get("data_points").isJsonArray()) return new double[]{0, 0, 0};
+        JsonArray dp = k.getAsJsonArray("data_points");
+        if (dp.isEmpty()) return new double[]{0, 0, 0};
+        JsonObject p = dp.get(0).getAsJsonObject();
+        return new double[]{ num(p.get("x"), 0), num(p.get("y"), 0), num(p.get("z"), 0) };
+    }
+
+    /** Exact world matrix of a group at time t of a clip (rest pose when clip == null): T(origin+pos) * R(rest+anim) * T(-origin), chained. */
+    private static double[][] world(Bone b, Clip clip, double t, Map<Bone, double[][]> cache) {
         if (b == null) return identity();
         double[][] w = cache.get(b);
         if (w != null) return w;
-        double[][] local = mul(mul(translate(b.origin[0], b.origin[1], b.origin[2]), rotZYX(b.rotation)), translate(-b.origin[0], -b.origin[1], -b.origin[2]));
-        w = b.parent == null ? local : mul(world(b.parent, cache), local);
+        double[] r = b.rotation.clone(), p = {0, 0, 0};
+        if (clip != null) {
+            double[] ar = sample(clip.rot.get(b.uuid), t), ap = sample(clip.pos.get(b.uuid), t);
+            for (int i = 0; i < 3; i++) { r[i] += ar[i]; p[i] += ap[i]; }
+        }
+        double[][] local = mul(mul(translate(b.origin[0] + p[0], b.origin[1] + p[1], b.origin[2] + p[2]), rotZYX(r)), translate(-b.origin[0], -b.origin[1], -b.origin[2]));
+        w = b.parent == null ? local : mul(world(b.parent, clip, t, cache), local);
         cache.put(b, w);
         return w;
     }
 
-    private int emitComposite(String name, String mpath, Map<String, Cube> cubes, Map<String, Bone> bones, JsonObject textures,
-                              Map<String, Integer> texIndex, List<double[]> texRes) {
+    private int emitComposite(String cmd, String mpath, Map<String, Cube> cubes, Map<String, Bone> bones, JsonObject textures,
+                              Map<String, Integer> texIndex, List<double[]> texRes, Clip clip, double t, String suffix) {
+        String name = cmd;
         Bone root = new Bone(); root.name = "root"; root.uuid = "__root"; root.origin = new double[]{8, 8, 8};
         Map<Bone, Part> byBone = new LinkedHashMap<>();
         List<Part> parts = new ArrayList<>();
@@ -386,14 +474,15 @@ public final class PackGenerator {
             if (part == null) { part = new Part(); part.bone = b; part.pivot = b.origin.clone(); part.suffix = "" + byBone.size(); byBone.put(b, part); parts.add(part); }
             part.cubes.add(c);
         }
-        if (solo > 0) report.add(name + ": " + solo + " cube(s) with a free rotation angle became their own exact part");
+        if (solo > 0 && clip == null) report.add(name + ": " + solo + " cube(s) with a free rotation angle became their own exact part");
         Map<Bone, double[][]> cache = new HashMap<>();
         List<String> wrappers = new ArrayList<>();
         int clampedPivots = 0;
         for (Part part : parts) {
-            String geom = mpath + "__g" + part.suffix, wrap = mpath + "__p" + part.suffix;
-            writePartGeometry(name, geom, part, textures, texIndex, texRes);
-            double[][] M = mul(world(part.bone, cache), part.extra);
+            String geom = mpath + "__g" + part.suffix, wrap = mpath + suffix + "__p" + part.suffix;
+            if (!files.containsKey("assets/" + NS + "/models/item/" + geom + ".json")) writePartGeometry(name, geom, part, textures, texIndex, texRes);
+            else part.k = partFit(part);
+            double[][] M = mul(world(part.bone, clip, t, cache), part.extra);
             double[] Pw = apply(M, part.pivot);
             double[][] Rw = {{M[0][0], M[0][1], M[0][2]}, {M[1][0], M[1][1], M[1][2]}, {M[2][0], M[2][1], M[2][2]}};
             double[] eul = eulerXYZ(Rw);
@@ -414,9 +503,25 @@ public final class PackGenerator {
             put("assets/" + NS + "/models/item/" + wrap + ".json", GSON.toJson(w));
             wrappers.add(wrap);
         }
-        if (clampedPivots > 0) warnings.add(name + ": " + clampedPivots + " part(s) have their pivot more than 80 px (5 blocks) from the Blockbench origin - the client cannot place them that far; move the model closer to (0,0,0)");
-        compositeParts.put(name, wrappers);
+        if (clampedPivots > 0 && clip == null) warnings.add(name + ": " + clampedPivots + " part(s) have their pivot more than 80 px (5 blocks) from the Blockbench origin - the client cannot place them that far; move the model closer to (0,0,0)");
+        compositeParts.put(cmd, wrappers);
         return parts.size();
+    }
+
+    /** The fit factor a part's geometry was written with (recomputed for animation frames: geometry is shared). */
+    private static double partFit(Part part) {
+        double[] shift = {8 - part.pivot[0], 8 - part.pivot[1], 8 - part.pivot[2]};
+        double far = 0;
+        for (Cube c : part.cubes) {
+            int[][] Pe = part.soloCube == c ? identityPerm() : nearestPerm(rot3(c.rotation));
+            for (int corner = 0; corner < 8; corner++) {
+                double[] v = { ((corner & 1) == 0 ? c.from[0] - c.inflate : c.to[0] + c.inflate) - c.origin[0],
+                               ((corner & 2) == 0 ? c.from[1] - c.inflate : c.to[1] + c.inflate) - c.origin[1],
+                               ((corner & 4) == 0 ? c.from[2] - c.inflate : c.to[2] + c.inflate) - c.origin[2] };
+                for (int i = 0; i < 3; i++) far = Math.max(far, Math.abs(Pe[i][0]*v[0]+Pe[i][1]*v[1]+Pe[i][2]*v[2] + c.origin[i] + shift[i] - 8));
+            }
+        }
+        return far > 23.9 ? 23.9 / far : 1.0;
     }
 
     /** One part's geometry in part-local space: pivot moved to the model centre (8,8,8), shrunk by k if it would leave
