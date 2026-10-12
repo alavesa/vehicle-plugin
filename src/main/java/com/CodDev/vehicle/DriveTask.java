@@ -37,7 +37,7 @@ public final class DriveTask implements Runnable {
 
     private static final class State {
         double speed;            // blocks per second, negative = reverse
-        int animTick;            // driving/idle animation clock
+        double animPhase;        // driving/idle animation clock (ticks, fractional: advances with speed)
         String lastModel;        // custom_model_data string the body currently shows
         float yaw;
         Vector momentum;         // last velocity set (blocks per tick)
@@ -176,10 +176,14 @@ public final class DriveTask implements Runnable {
             if (anim != null && !anim.isEmpty()) {
                 int[] a = plugin.animation(type.model, anim);
                 if (a != null && a[0] > 0) {
+                    // Playback rate: 1.0 = Blockbench speed, reached at `drive.animation-full-speed` blocks/s (0 = the
+                    // type's max speed); below that the animation runs proportionally slower, above it faster.
+                    double full = plugin.getConfig().getDouble("drive.animation-full-speed", 0);
+                    if (full <= 0) full = Math.max(0.1, type.maxSpeed);
                     double rate = moving && plugin.getConfig().getBoolean("drive.animation-follows-speed", true)
-                        ? Math.max(0.35, Math.min(2.5, Math.abs(speed) / Math.max(0.1, type.maxSpeed * 0.5))) : 1.0;
-                    st.animTick += (int) Math.max(1, Math.round(rate * 1));
-                    int frame = (st.animTick / Math.max(1, a[1])) % a[0] + 1;
+                        ? Math.max(0.15, Math.min(3.0, Math.abs(speed) / full)) : 1.0;
+                    st.animPhase += rate;
+                    int frame = (int) (st.animPhase / Math.max(1, a[1])) % a[0] + 1;
                     want = type.model + "_" + anim + "_" + frame;
                 }
             }

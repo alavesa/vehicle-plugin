@@ -54,6 +54,10 @@ public final class PackGenerator {
     private final Map<String, String> cmdToModel = new LinkedHashMap<>();
     /** composite mode: model name -> wrapper paths (one per group / free-rotated cube), shown as minecraft:composite. */
     private final Map<String, List<String>> compositeParts = new LinkedHashMap<>();
+    /** Sign of animation rotation / position channels relative to the rest pose of the CURRENT file. Blockbench
+     *  files before format 5 store keyframes in the Bedrock convention: rotation X,Y and position X are inverted
+     *  relative to the group's rest values (what BetterModel does per format version); Blockbench 5 files are not. */
+    private double[] animRotSign = {1, 1, 1}, animPosSign = {1, 1, 1};
     /** model -> animation name -> [frames, frame-ticks] (composite mode only). */
     private final Map<String, Map<String, int[]>> animations = new LinkedHashMap<>();
     public Map<String, Map<String, int[]>> animations() { return animations; }
@@ -222,6 +226,14 @@ public final class PackGenerator {
     private void convert(File bb, String name, String mpath) throws IOException {
         JsonObject root = JsonParser.parseString(Files.readString(bb.toPath())).getAsJsonObject();
         if (!mpath.equals(name)) warnings.add("'" + name + "' has upper-case letters or symbols - its files are written as '" + mpath + "' (the model name you use stays '" + name + "')");
+        int formatMajor = 4;
+        if (root.has("meta") && root.getAsJsonObject("meta").has("format_version")) {
+            try { formatMajor = Integer.parseInt(str(root.getAsJsonObject("meta").get("format_version"), "4").split("\\.")[0].trim()); } catch (NumberFormatException ignored) { }
+        }
+        animRotSign = signConfig("pack.anim-rotation-sign", formatMajor >= 5 ? new double[]{1, 1, 1} : new double[]{-1, -1, 1});
+        animPosSign = signConfig("pack.anim-position-sign", formatMajor >= 5 ? new double[]{1, 1, 1} : new double[]{-1, 1, 1});
+        if (root.has("animations") && root.get("animations").isJsonArray() && root.getAsJsonArray("animations").size() > 0)
+            report.add(name + ": Blockbench format " + formatMajor + ".x - animation rotation sign " + join(animRotSign) + ", position sign " + join(animPosSign));
         double resW = 16, resH = 16;
         if (root.has("resolution")) {
             JsonObject r = root.getAsJsonObject("resolution");
@@ -410,6 +422,12 @@ public final class PackGenerator {
         return Math.abs(e[a] - snapped) < 0.5 && Math.abs(snapped) <= 45;
     }
 
+    /** "auto" (default) = by the file's Blockbench version; or an explicit [x, y, z] list of 1 / -1 in config.yml. */
+    private double[] signConfig(String key, double[] auto) {
+        List<Double> l = plugin.getConfig().getDoubleList(key);
+        return l.size() == 3 ? new double[]{ l.get(0), l.get(1), l.get(2) } : auto;
+    }
+
     private static final class Clip {
         String name; double length; Map<String, List<JsonObject>> rot = new HashMap<>(), pos = new HashMap<>();   // bone uuid -> keyframes
     }
@@ -440,14 +458,14 @@ public final class PackGenerator {
     }
 
     /** Exact world matrix of a group at time t of a clip (rest pose when clip == null): T(origin+pos) * R(rest+anim) * T(-origin), chained. */
-    private static double[][] world(Bone b, Clip clip, double t, Map<Bone, double[][]> cache) {
+    private double[][] world(Bone b, Clip clip, double t, Map<Bone, double[][]> cache) {
         if (b == null) return identity();
         double[][] w = cache.get(b);
         if (w != null) return w;
         double[] r = b.rotation.clone(), p = {0, 0, 0};
         if (clip != null) {
             double[] ar = sample(clip.rot.get(b.uuid), t), ap = sample(clip.pos.get(b.uuid), t);
-            for (int i = 0; i < 3; i++) { r[i] += ar[i]; p[i] += ap[i]; }
+            for (int i = 0; i < 3; i++) { r[i] += ar[i] * animRotSign[i]; p[i] += ap[i] * animPosSign[i]; }
         }
         double[][] local = mul(mul(translate(b.origin[0] + p[0], b.origin[1] + p[1], b.origin[2] + p[2]), rotZYX(r)), translate(-b.origin[0], -b.origin[1], -b.origin[2]));
         w = b.parent == null ? local : mul(world(b.parent, clip, t, cache), local);

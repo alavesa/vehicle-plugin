@@ -23,6 +23,10 @@ pack:
   mode: composite
   frame-ticks: 1         # animation frames: one per tick unless the animation has Blockbench snapping
   max-frames: 40         # cap per animation
+  # Animation channel signs relative to the rest pose. Default "auto": Blockbench 4.x files (format_version 4.*) use
+  # rotation [-1,-1,1] and position [-1,1,1] (Bedrock convention), Blockbench 5 files [1,1,1]. Override with a list:
+  # anim-rotation-sign: [-1, -1, 1]
+  # anim-position-sign: [-1, 1, 1]
   description: "Vehicle models (generated)"
   min-format: 46
   max-format: 999
@@ -42,7 +46,8 @@ crash:
   destroy-at-zero-health: true
 
 drive:
-  animation-follows-speed: true   # the drive animation runs faster at higher speed
+  animation-follows-speed: true   # the drive animation speed follows the vehicle speed
+  animation-full-speed: 0         # blocks/s at which the animation runs at Blockbench speed (0 = the type's max speed)
   # Show "speed | health" on the driver's action bar.
   speedometer: true
   # Riders who leave step out beside the vehicle instead of on top of it.
