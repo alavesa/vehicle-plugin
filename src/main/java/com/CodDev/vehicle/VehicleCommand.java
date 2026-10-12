@@ -97,7 +97,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
             case "name" -> t.name = v.length == 0 ? t.id : String.join(" ", v);
             case "model" -> {
                 t.model = v[0];
-                if (plugin.modelInfo(v[0]) == null) ok(s, "Note: no model named '" + v[0] + "' is in the generated pack. Models: " + String.join(", ", PackGenerator.scanNames(plugin)));
+                if (!plugin.hasModel(v[0])) ok(s, "Note: no model named '" + v[0] + "' is " + (plugin.bmActive() ? "known to BetterModel yet (file in plugins/Vehicle/models? it is synced + reloaded on restart)" : "in the generated pack") + ". Models: " + String.join(", ", PackGenerator.scanNames(plugin)));
             }
             case "speed", "max-speed", "maxspeed" -> t.maxSpeed = Math.max(0.1, Double.parseDouble(v[0]));
             case "acceleration", "accel" -> t.acceleration = Math.max(0.1, Double.parseDouble(v[0]));
@@ -110,19 +110,19 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
             case "modelyaw", "model-yaw", "rotation" -> t.modelYaw = Double.parseDouble(v[0]);
             case "animation", "anim" -> {
                 String sub = v[0].toLowerCase(java.util.Locale.ROOT);
-                java.util.Set<String> names = plugin.animationNames(t.model);
+                java.util.Set<String> names = plugin.bmActive() ? plugin.bridge().animations(t.model) : plugin.animationNames(t.model);
                 switch (sub) {
                     case "list" -> { ok(s, "Animations in model '" + t.model + "': " + (names.isEmpty() ? "(none - the .bbmodel has no animations, or the pack was built in baked mode)" : String.join(", ", names))); return; }
                     case "clear", "none" -> { t.driveAnimation = ""; t.idleAnimation = ""; }
                     case "set", "drive" -> {
                         if (v.length < 2) { err(s, "Usage: animation set <animation name>   (animation list shows them)"); return; }
                         t.driveAnimation = v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
-                        if (!names.contains(t.driveAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
+                        if (plugin.bmActive() ? !plugin.bridge().hasAnimation(t.model, v[1]) : !names.contains(t.driveAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
                     }
                     case "idle" -> {
                         if (v.length < 2) { err(s, "Usage: animation idle <animation name>"); return; }
                         t.idleAnimation = v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
-                        if (!names.contains(t.idleAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
+                        if (plugin.bmActive() ? !plugin.bridge().hasAnimation(t.model, v[1]) : !names.contains(t.idleAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
                     }
                     default -> { err(s, "Usage: animation set <name> | idle <name> | clear | list"); return; }
                 }

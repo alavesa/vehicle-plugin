@@ -38,6 +38,8 @@ public final class DriveTask implements Runnable {
     private static final class State {
         double speed;            // blocks per second, negative = reverse
         double animPhase;        // driving/idle animation clock (ticks, fractional: advances with speed)
+        float animRate = 1f;     // BetterModel playback speed (1 = Blockbench speed)
+        String bmAnim;           // BetterModel animation currently playing
         String lastModel;        // custom_model_data string the body currently shows
         float yaw;
         Vector momentum;         // last velocity set (blocks per tick)
@@ -168,6 +170,26 @@ public final class DriveTask implements Runnable {
         st.speed = speed;
         st.yaw = yaw;
 
+        // ---- BetterModel renders + animates the body: just steer which animation plays and how fast
+        ModelBridge bridge = plugin.bridge();
+        if (bridge != null) {
+            manager.ensureTracker(base, type);
+            var tracker = manager.tracker(base);
+            boolean moving = Math.abs(speed) > 0.3;
+            String anim = moving ? type.driveAnimation : type.idleAnimation;
+            double full = plugin.getConfig().getDouble("drive.animation-full-speed", 0);
+            if (full <= 0) full = Math.max(0.1, type.maxSpeed);
+            st.animRate = (float) (moving && plugin.getConfig().getBoolean("drive.animation-follows-speed", true) ? Math.max(0.15, Math.min(3.0, Math.abs(speed) / full)) : 1.0);
+            if (tracker != null) {
+                String want = anim == null || anim.isEmpty() || !bridge.hasAnimation(type.model, anim) ? null : anim;
+                if (!java.util.Objects.equals(want, st.bmAnim)) {
+                    if (st.bmAnim != null) bridge.stop(tracker, st.bmAnim);
+                    final State fst = st;
+                    if (want != null) bridge.animate(tracker, want, true, () -> fst.animRate);
+                    st.bmAnim = want;
+                }
+            }
+        } else
         // ---- animation frames baked from the .bbmodel (drive-animation while moving, idle-animation at rest)
         if (type.model != null && !type.model.isEmpty()) {
             boolean moving = Math.abs(speed) > 0.3;

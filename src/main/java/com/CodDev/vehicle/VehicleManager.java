@@ -41,6 +41,29 @@ import java.util.UUID;
  */
 public final class VehicleManager {
 
+    /** BetterModel trackers per vehicle base (only used when BetterModel renders the bodies). */
+    private final java.util.Map<java.util.UUID, kr.toxicity.model.api.tracker.EntityTracker> trackers = new java.util.HashMap<>();
+
+    /** Make sure a BetterModel tracker shows this vehicle's model (no-op when BetterModel is not active). */
+    public void ensureTracker(Pig base, VehicleType type) {
+        ModelBridge bridge = plugin.bridge();
+        if (bridge == null) return;
+        var cur = trackers.get(base.getUniqueId());
+        if (cur != null && !cur.isClosed()) return;
+        if (!bridge.has(type.model)) return;
+        var t = bridge.attach(base, type.model, () -> (float) type.modelYaw);
+        if (t != null) trackers.put(base.getUniqueId(), t);
+    }
+
+    public kr.toxicity.model.api.tracker.EntityTracker tracker(Pig base) { return plugin.bridge() == null ? null : trackers.get(base.getUniqueId()); }
+
+    public void closeTracker(java.util.UUID id) {
+        var t = trackers.remove(id);
+        if (t != null && plugin.bridge() != null) plugin.bridge().close(t);
+    }
+
+    public void closeAllTrackers() { for (java.util.UUID id : new java.util.ArrayList<>(trackers.keySet())) closeTracker(id); }
+
     public static final String TAG_BASE = "vehicle.base";
     public static final String TAG_PART = "vehicle.part";
     public static final String TAG_SEAT = "vehicle.seat";
@@ -124,6 +147,7 @@ public final class VehicleManager {
 
     /** Remove a vehicle and all of its parts; riders are set free first. */
     public void remove(Pig base) {
+        closeTracker(base.getUniqueId());
         for (Entity e : parts(base)) {
             e.eject();
             e.remove();
@@ -285,6 +309,7 @@ public final class VehicleManager {
             base.getPersistentDataContainer().set(bodyKey, PersistentDataType.STRING, body.getUniqueId().toString());
             applyBody(body, type);
         }
+        ensureTracker(base, type);
         List<String> list = seatList(base);
         boolean changed = false;
         int want = Math.max(1, type.seats.size());
@@ -352,6 +377,12 @@ public final class VehicleManager {
 
     /** Item + transformation of the body for a type (model fit scale compensated, Blockbench origin at the base). */
     public void applyBody(ItemDisplay d, VehicleType type) {
+        if (plugin.bridge() != null) {
+            d.setItemStack(new ItemStack(Material.AIR));   // BetterModel draws the body
+            Pig base = entity(d.getPersistentDataContainer().get(baseKey, PersistentDataType.STRING)) instanceof Pig p ? p : null;
+            if (base != null) { closeTracker(base.getUniqueId()); ensureTracker(base, type); }
+            return;
+        }
         d.setItemStack(modelItem(type.model));
         d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
         PackGenerator.ModelInfo mi = plugin.modelInfo(type.model);

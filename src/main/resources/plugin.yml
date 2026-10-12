@@ -2,6 +2,7 @@ name: Vehicle
 version: '${project.version}'
 main: com.CodDev.vehicle.VehiclePlugin
 api-version: '1.21'
+softdepend: [BetterModel]
 author: CodDev
 description: Drivable vehicles with Blockbench models - WASD driving, seats, hitbox and crash physics, generated resource pack.
 commands:

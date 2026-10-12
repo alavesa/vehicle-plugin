@@ -1,3 +1,10 @@
+# BetterModel integration: when the BetterModel plugin is installed, vehicle .bbmodel files are mirrored into
+# plugins/BetterModel/models (prefix vehicle_) so BetterModel builds the one resource pack for the server, and
+# vehicle bodies + driving animations are rendered by BetterModel (entity animations with Blockbench semantics).
+# Set enabled: false to keep using this plugin's own pack generator and ItemDisplay bodies.
+bettermodel:
+  enabled: true
+
 # Vehicle plugin configuration
 #
 # Models: put your Blockbench files into plugins/Vehicle/models/<name>.bbmodel and restart the server

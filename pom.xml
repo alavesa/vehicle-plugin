@@ -6,7 +6,7 @@
 
   <groupId>com.CodDev</groupId>
   <artifactId>vehicle</artifactId>
-  <version>1.3.1</version>
+  <version>1.4.0</version>
   <packaging>jar</packaging>
 
   <name>Vehicle</name>
@@ -30,6 +30,13 @@
       <artifactId>paper-api</artifactId>
       <version>1.21.4-R0.1-SNAPSHOT</version>
       <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>kr.toxicity.model</groupId>
+      <artifactId>bettermodel</artifactId>
+      <version>3.5.0</version>
+      <scope>system</scope>
+      <systemPath>${project.basedir}/libs/bettermodel-3.5.0-paper.jar</systemPath>
     </dependency>
   </dependencies>
 
