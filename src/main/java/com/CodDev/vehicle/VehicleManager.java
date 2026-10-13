@@ -51,8 +51,14 @@ public final class VehicleManager {
         var cur = trackers.get(base.getUniqueId());
         if (cur != null && !cur.isClosed()) return;
         if (!bridge.has(type.model)) return;
-        var t = bridge.attach(base, type.model, () -> (float) type.modelYaw);
-        if (t != null) trackers.put(base.getUniqueId(), t);
+        // the model turns with the base every tick (DriveTask sets its rotation); the Pig's own body yaw never follows
+        // (no AI), so BetterModel's default body-yaw tracking is replaced by the base yaw + model-yaw
+        var t = bridge.attach(base, type.model, () -> ModelBridge.modelYaw(base.getLocation().getYaw(), type.modelYaw, bridge.yawOffset()), type.scale);
+        if (t == null) return;
+        trackers.put(base.getUniqueId(), t);
+        // a vehicle that existed before BetterModel still carries the item model on its body: hide it, BetterModel draws
+        ItemDisplay body = body(base);
+        if (body != null && body.getItemStack().getType() != Material.AIR) body.setItemStack(new ItemStack(Material.AIR));
     }
 
     public kr.toxicity.model.api.tracker.EntityTracker tracker(Pig base) { return plugin.bridge() == null ? null : trackers.get(base.getUniqueId()); }

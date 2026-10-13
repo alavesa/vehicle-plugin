@@ -90,11 +90,28 @@ public final class ModelBridge {
         return new java.util.TreeSet<>(r.get().animations().keySet());
     }
 
-    /** Attach the model to an entity; BetterModel then follows the entity. yaw = extra model yaw (degrees) on top of the entity's. */
-    public EntityTracker attach(Entity base, String model, Supplier<Float> yawSupplier) {
+    /** BetterModel turns every model 180 degrees itself (Blockbench north = the entity's front), the same job our
+     *  ItemDisplay pipeline did with model-yaw 180. So the yaw BetterModel gets = entity yaw + (model-yaw - 180) + the
+     *  config nudge `bettermodel.yaw-offset`, normalised to -180..180. */
+    public static float modelYaw(float entityYaw, double modelYaw, double yawOffset) {
+        double y = (entityYaw + modelYaw - 180.0 + yawOffset) % 360.0;
+        if (y > 180) y -= 360; if (y <= -180) y += 360;
+        return (float) y;
+    }
+
+    /** BetterModel's default scaler follows the ENTITY's scale attribute - our base Pig carries hitbox/0.9 (2.0 by
+     *  default) for its collision box, which doubled every model. The model must use the type's own scale only. */
+    public static float modelScale(double typeScale) { return (float) Math.max(0.01, Math.min(16.0, typeScale)); }
+
+    public double yawOffset() { return plugin.getConfig().getDouble("bettermodel.yaw-offset", 0.0); }
+
+    /** Attach the model to an entity; BetterModel then follows the entity. yawSupplier = the ABSOLUTE model yaw per tick
+     *  (see modelYaw), scale = the model scale (independent of the entity's scale attribute). */
+    public EntityTracker attach(Entity base, String model, Supplier<Float> yawSupplier, double scale) {
         Optional<ModelRenderer> r = BetterModel.model(key(model));
         if (r.isEmpty()) return null;
         EntityTracker t = r.get().create(BukkitAdapter.adapt(base), new TrackerModifier(true, false, false));
+        t.scaler(kr.toxicity.model.api.tracker.ModelScaler.value(modelScale(scale)));
         if (yawSupplier != null) t.rotation(() -> new ModelRotation(0f, yawSupplier.get()));
         return t;
     }

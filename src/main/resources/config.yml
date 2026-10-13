@@ -4,6 +4,11 @@
 # Set enabled: false to keep using this plugin's own pack generator and ItemDisplay bodies.
 bettermodel:
   enabled: true
+  # Extra model yaw (degrees) under BetterModel, on top of each type's model-yaw. BetterModel already turns every
+  # model 180 degrees (Blockbench north = front), exactly what model-yaw 180 did before, so 0 keeps cars facing as
+  # they did; set 180 here if a model comes out backwards. The model scale = the type's scale (the base entity's
+  # own scale attribute, which is the hitbox, is ignored).
+  yaw-offset: 0
 
 # Vehicle plugin configuration
 #
