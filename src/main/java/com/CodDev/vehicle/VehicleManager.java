@@ -13,11 +13,12 @@ import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
-import org.bukkit.entity.Pig;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -34,7 +35,7 @@ import java.util.UUID;
 /**
  * Spawns, finds and removes vehicles and their parts.
  *
- * A vehicle is an invisible Pig (the physics body: gravity, block collision, step height, a real hitbox
+ * A vehicle is an invisible ArmorStand (the physics body: gravity, block collision, step height, a real hitbox
  * via the SCALE attribute, and a real health pool) plus separate entities that are moved along every tick:
  * an ItemDisplay showing the Blockbench model, and per seat an invisible marker ArmorStand (the rider sits
  * on it) and an Interaction entity (the click box that lets players enter from a distance).
@@ -45,13 +46,13 @@ public final class VehicleManager {
     private final java.util.Map<java.util.UUID, kr.toxicity.model.api.tracker.EntityTracker> trackers = new java.util.HashMap<>();
 
     /** Make sure a BetterModel tracker shows this vehicle's model (no-op when BetterModel is not active). */
-    public void ensureTracker(Pig base, VehicleType type) {
+    public void ensureTracker(LivingEntity base, VehicleType type) {
         ModelBridge bridge = plugin.bridge();
         if (bridge == null) return;
         var cur = trackers.get(base.getUniqueId());
         if (cur != null && !cur.isClosed()) return;
         if (!bridge.has(type.model)) return;
-        // the model turns with the base every tick (DriveTask sets its rotation); the Pig's own body yaw never follows
+        // the model turns with the base every tick (DriveTask sets its rotation); the LivingEntity's own body yaw never follows
         // (no AI), so BetterModel's default body-yaw tracking is replaced by the base yaw + model-yaw
         var t = bridge.attach(base, type.model, () -> ModelBridge.modelYaw(base.getLocation().getYaw(), type.modelYaw, bridge.yawOffset()), type.scale);
         if (t == null) return;
@@ -61,7 +62,7 @@ public final class VehicleManager {
         if (body != null && body.getItemStack().getType() != Material.AIR) body.setItemStack(new ItemStack(Material.AIR));
     }
 
-    public kr.toxicity.model.api.tracker.EntityTracker tracker(Pig base) { return plugin.bridge() == null ? null : trackers.get(base.getUniqueId()); }
+    public kr.toxicity.model.api.tracker.EntityTracker tracker(LivingEntity base) { return plugin.bridge() == null ? null : trackers.get(base.getUniqueId()); }
 
     public void closeTracker(java.util.UUID id) {
         var t = trackers.remove(id);
@@ -101,26 +102,29 @@ public final class VehicleManager {
 
     // ------------------------------------------------------------------ spawn / remove
 
-    public Pig spawn(VehicleType type, Location at, UUID owner) {
+    public LivingEntity spawn(VehicleType type, Location at, UUID owner) {
         Location loc = at.clone();
         loc.setPitch(0);
-        Pig base = loc.getWorld().spawn(loc, Pig.class, pig -> {
-            pig.setInvisible(true);
-            pig.setSilent(true);
-            pig.setPersistent(true);
-            pig.setRemoveWhenFarAway(false);
-            pig.setAdult();
-            pig.setBreed(false);
-            pig.setCanPickupItems(false);
-            pig.customName(Component.text(type.name));
-            pig.setCustomNameVisible(false);
-            pig.addScoreboardTag(TAG_BASE);
-            pig.getPersistentDataContainer().set(typeKey, PersistentDataType.STRING, type.id);
-            if (owner != null) pig.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, owner.toString());
+        // The base is an invisible ARMOR STAND: it has gravity, block collision, a step height and a real hitbox like a
+        // mob, but no AI, no sounds, no breeding/leashing/targeting, and it can be made invulnerable (config invincible).
+        ArmorStand base = loc.getWorld().spawn(loc, ArmorStand.class, a -> {
+            a.setInvisible(true);
+            a.setSilent(true);
+            a.setPersistent(true);
+            a.setMarker(false);          // marker stands have no physics - the car must collide with blocks
+            a.setGravity(true);
+            a.setBasePlate(false);
+            a.setArms(false);
+            a.setSmall(false);
+            a.setCanPickupItems(false);
+            a.setDisabledSlots(EquipmentSlot.values());   // nobody can dress the car
+            a.setInvulnerable(invincible());
+            a.customName(Component.text(type.name));
+            a.setCustomNameVisible(false);
+            a.addScoreboardTag(TAG_BASE);
+            a.getPersistentDataContainer().set(typeKey, PersistentDataType.STRING, type.id);
+            if (owner != null) a.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, owner.toString());
         });
-        // AI stays ON (NoAI freezes velocity processing), aware=false stops the pig's own decisions for good.
-        base.setAware(false);
-        Bukkit.getMobGoals().removeAllGoals(base);
         applyAttributes(base, type);
         base.setHealth(Math.min(base.getHealth(), maxHealth(base)));
         base.setHealth(maxHealth(base));
@@ -129,9 +133,20 @@ public final class VehicleManager {
         return base;
     }
 
-    public void applyAttributes(Pig base, VehicleType type) {
-        double scale = Math.max(0.1, Math.min(16.0, type.hitbox / 0.9));
+    /** Config `invincible` (default true): the vehicle takes no damage at all - not from players, bullets, explosions,
+     *  fire, crashes or ramming. false = the old health pool (crash damage, destroyed at zero health). */
+    public boolean invincible() { return plugin.getConfig().getBoolean("invincible", true); }
+
+    /** The SCALE attribute that gives the base its `hitbox`: an armor stand is 0.5 x 1.975 blocks (4:1), so the hitbox
+     *  value is its HEIGHT and the width comes out at about a quarter of it (a pig was 0.9 x 0.9, hitbox = both). */
+    public static double baseScale(double hitbox, boolean armorStand) {
+        return Math.max(0.1, Math.min(16.0, hitbox / (armorStand ? 1.975 : 0.9)));
+    }
+
+    public void applyAttributes(LivingEntity base, VehicleType type) {
+        double scale = baseScale(type.hitbox, base instanceof ArmorStand);
         set(base, Attribute.SCALE, scale);
+        base.setInvulnerable(invincible());
         set(base, Attribute.STEP_HEIGHT, Math.max(0.0, Math.min(10.0, type.stepHeight)));
         set(base, Attribute.KNOCKBACK_RESISTANCE, 1.0);
         double hp = Math.max(1.0, Math.min(1024.0, type.health));
@@ -139,20 +154,20 @@ public final class VehicleManager {
         if (base.getHealth() > hp) base.setHealth(hp);
     }
 
-    private static void set(Pig base, Attribute attribute, double value) {
+    private static void set(LivingEntity base, Attribute attribute, double value) {
         var inst = base.getAttribute(attribute);
         if (inst == null) base.registerAttribute(attribute);
         inst = base.getAttribute(attribute);
         if (inst != null) inst.setBaseValue(value);
     }
 
-    public double maxHealth(Pig base) {
+    public double maxHealth(LivingEntity base) {
         var inst = base.getAttribute(Attribute.MAX_HEALTH);
         return inst == null ? 20.0 : inst.getValue();
     }
 
     /** Remove a vehicle and all of its parts; riders are set free first. */
-    public void remove(Pig base) {
+    public void remove(LivingEntity base) {
         closeTracker(base.getUniqueId());
         for (Entity e : parts(base)) {
             e.eject();
@@ -165,7 +180,7 @@ public final class VehicleManager {
     }
 
     /** Boom: effects, then removal. */
-    public void destroy(Pig base) {
+    public void destroy(LivingEntity base) {
         World w = base.getWorld();
         Location l = base.getLocation().add(0, 0.5, 0);
         w.spawnParticle(Particle.EXPLOSION, l, 2, 0.5, 0.3, 0.5, 0);
@@ -177,8 +192,8 @@ public final class VehicleManager {
     }
 
     /** Lower the vehicle's health without a damage event; destroys it at zero (if configured). */
-    public void hurt(Pig base, double amount) {
-        if (amount <= 0 || base.isDead()) return;
+    public void hurt(LivingEntity base, double amount) {
+        if (amount <= 0 || base.isDead() || invincible()) return;
         double h = base.getHealth() - amount;
         if (h <= 0.0) {
             if (plugin.getConfig().getBoolean("crash.destroy-at-zero-health", true)) destroy(base);
@@ -188,52 +203,66 @@ public final class VehicleManager {
         base.setHealth(h);
     }
 
+    /** Vehicles from before 1.5.0 are invisible pigs: rebuild each one as an armor-stand vehicle of the same type, owner,
+     *  position and heading (riders are put down). Returns the new base, or the old one if it is not a legacy pig. */
+    public LivingEntity migrateLegacy(LivingEntity base) {
+        if (!(base instanceof org.bukkit.entity.Pig)) return base;
+        VehicleType type = typeOf(base);
+        if (type == null) { remove(base); return null; }
+        UUID owner = ownerOf(base);
+        Location loc = base.getLocation();
+        remove(base);
+        LivingEntity fresh = spawn(type, loc, owner);
+        plugin.getLogger().info("Migrated vehicle " + type.id + " at " + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ() + " from a pig base to an armor stand.");
+        return fresh;
+    }
+
     // ------------------------------------------------------------------ lookup
 
-    public VehicleType typeOf(Pig base) {
+    public VehicleType typeOf(LivingEntity base) {
         String id = base.getPersistentDataContainer().get(typeKey, PersistentDataType.STRING);
         return id == null ? null : plugin.types().get(id);
     }
 
-    public String typeIdOf(Pig base) {
+    public String typeIdOf(LivingEntity base) {
         return base.getPersistentDataContainer().get(typeKey, PersistentDataType.STRING);
     }
 
-    public UUID ownerOf(Pig base) {
+    public UUID ownerOf(LivingEntity base) {
         String s = base.getPersistentDataContainer().get(ownerKey, PersistentDataType.STRING);
         try { return s == null ? null : UUID.fromString(s); } catch (IllegalArgumentException e) { return null; }
     }
 
-    public static boolean isBase(Entity e) { return e instanceof Pig && e.getScoreboardTags().contains(TAG_BASE); }
+    public static boolean isBase(Entity e) { return e instanceof LivingEntity && e.getScoreboardTags().contains(TAG_BASE); }
     public static boolean isPart(Entity e) { return e.getScoreboardTags().contains(TAG_PART); }
 
     /** The vehicle any of its entities belongs to (base, body, seat or click box), else null. */
-    public Pig baseOf(Entity any) {
+    public LivingEntity baseOf(Entity any) {
         if (any == null) return null;
-        if (isBase(any)) return (Pig) any;
+        if (isBase(any)) return (LivingEntity) any;
         if (!isPart(any)) return null;
         String id = any.getPersistentDataContainer().get(baseKey, PersistentDataType.STRING);
         if (id == null) return null;
         try {
             Entity e = Bukkit.getEntity(UUID.fromString(id));
-            return isBase(e) ? (Pig) e : null;
+            return isBase(e) ? (LivingEntity) e : null;
         } catch (IllegalArgumentException ex) { return null; }
     }
 
-    public List<Pig> all() {
-        List<Pig> out = new ArrayList<>();
-        for (World w : Bukkit.getWorlds()) for (Pig p : w.getEntitiesByClass(Pig.class)) if (isBase(p)) out.add(p);
+    public List<LivingEntity> all() {
+        List<LivingEntity> out = new ArrayList<>();
+        for (World w : Bukkit.getWorlds()) for (LivingEntity p : w.getEntitiesByClass(LivingEntity.class)) if (isBase(p)) out.add(p);
         return out;
     }
 
-    public List<Player> occupants(Pig base) {
+    public List<Player> occupants(LivingEntity base) {
         List<Player> out = new ArrayList<>();
         for (Entity e : parts(base)) for (Entity p : e.getPassengers()) if (p instanceof Player pl) out.add(pl);
         return out;
     }
 
     /** All currently loaded part entities of a vehicle. */
-    public List<Entity> parts(Pig base) {
+    public List<Entity> parts(LivingEntity base) {
         List<Entity> out = new ArrayList<>();
         Entity body = entity(base.getPersistentDataContainer().get(bodyKey, PersistentDataType.STRING));
         if (body != null) out.add(body);
@@ -246,7 +275,7 @@ public final class VehicleManager {
         return out;
     }
 
-    public boolean references(Pig base, Entity part) {
+    public boolean references(LivingEntity base, Entity part) {
         String id = part.getUniqueId().toString();
         if (id.equals(base.getPersistentDataContainer().get(bodyKey, PersistentDataType.STRING))) return true;
         if (id.equals(base.getPersistentDataContainer().get(anchorKey, PersistentDataType.STRING))) return true;
@@ -259,7 +288,7 @@ public final class VehicleManager {
         try { return Bukkit.getEntity(UUID.fromString(uuid)); } catch (IllegalArgumentException e) { return null; }
     }
 
-    private List<String> seatList(Pig base) {
+    private List<String> seatList(LivingEntity base) {
         String s = base.getPersistentDataContainer().get(seatsKey, PersistentDataType.STRING);
         List<String> out = new ArrayList<>();
         if (s == null || s.isEmpty()) return out;
@@ -269,13 +298,13 @@ public final class VehicleManager {
 
     // ------------------------------------------------------------------ parts
 
-    public ItemDisplay body(Pig base) {
+    public ItemDisplay body(LivingEntity base) {
         Entity e = entity(base.getPersistentDataContainer().get(bodyKey, PersistentDataType.STRING));
         return e instanceof ItemDisplay d ? d : null;
     }
 
     /** Make sure the body and exactly type.seats.size() seats exist; respawn anything missing. */
-    public void ensureParts(Pig base, VehicleType type) {
+    public void ensureParts(LivingEntity base, VehicleType type) {
         // Vanilla never shoves an entity that carries a passenger (Entity.push checks isVehicle), so an
         // invisible marker stand rides the base: seated drivers inside the hitbox, bystanders and other
         // vehicles can no longer nudge a parked vehicle around. The base still pushes them.
@@ -364,7 +393,7 @@ public final class VehicleManager {
     }
 
     /** Seats in index order (0 = driver). Missing parts are respawned first. */
-    public List<SeatRef> seats(Pig base, VehicleType type) {
+    public List<SeatRef> seats(LivingEntity base, VehicleType type) {
         ensureParts(base, type);
         List<SeatRef> out = new ArrayList<>();
         List<String> list = seatList(base);
@@ -385,7 +414,7 @@ public final class VehicleManager {
     public void applyBody(ItemDisplay d, VehicleType type) {
         if (plugin.bridge() != null) {
             d.setItemStack(new ItemStack(Material.AIR));   // BetterModel draws the body
-            Pig base = entity(d.getPersistentDataContainer().get(baseKey, PersistentDataType.STRING)) instanceof Pig p ? p : null;
+            LivingEntity base = entity(d.getPersistentDataContainer().get(baseKey, PersistentDataType.STRING)) instanceof LivingEntity p ? p : null;
             if (base != null) { closeTracker(base.getUniqueId()); ensureTracker(base, type); }
             return;
         }
@@ -400,7 +429,7 @@ public final class VehicleManager {
     }
 
     /** Re-apply a type's settings to a live vehicle (after /vehicle edit). */
-    public void applyType(Pig base, VehicleType type) {
+    public void applyType(LivingEntity base, VehicleType type) {
         applyAttributes(base, type);
         ensureParts(base, type);
         ItemDisplay body = body(base);
@@ -408,9 +437,9 @@ public final class VehicleManager {
     }
 
     /** Per-tick placement of body, seats and click boxes around the base. */
-    public void tickParts(Pig base, VehicleType type, float yaw) { tickParts(base, type, yaw, seats(base, type)); }
+    public void tickParts(LivingEntity base, VehicleType type, float yaw) { tickParts(base, type, yaw, seats(base, type)); }
 
-    public void tickParts(Pig base, VehicleType type, float yaw, List<SeatRef> seats) {
+    public void tickParts(LivingEntity base, VehicleType type, float yaw, List<SeatRef> seats) {
         Location at = base.getLocation();
         ItemDisplay body = body(base);
         if (body != null) {
@@ -451,7 +480,7 @@ public final class VehicleManager {
         for (World w : Bukkit.getWorlds()) {
             for (Entity e : w.getEntities()) {
                 if (!isPart(e)) continue;
-                Pig base = baseOf(e);
+                LivingEntity base = baseOf(e);
                 if (base == null || !references(base, e)) {
                     e.eject();
                     e.remove();

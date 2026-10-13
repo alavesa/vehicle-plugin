@@ -8,7 +8,7 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.Pig;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
@@ -169,7 +169,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         }
         plugin.types().save();
         int live = 0;
-        for (Pig base : plugin.manager().all()) {
+        for (LivingEntity base : plugin.manager().all()) {
             if (t.id.equals(plugin.manager().typeIdOf(base))) { plugin.manager().applyType(base, t); live++; }
         }
         ok(s, "Set " + prop + " on '" + t.id + "'" + (live > 0 ? " (applied to " + live + " spawned vehicle(s))" : "") + ".");
@@ -196,7 +196,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
     private void remove(CommandSender s, String[] a) {
         if (a.length >= 2 && a[1].equalsIgnoreCase("all")) {
             int n = 0;
-            for (Pig b : plugin.manager().all()) { plugin.manager().remove(b); n++; }
+            for (LivingEntity b : plugin.manager().all()) { plugin.manager().remove(b); n++; }
             ok(s, "Removed " + n + " vehicle(s) in all worlds.");
             return;
         }
@@ -204,18 +204,18 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         if (a.length >= 2) {
             double r = Double.parseDouble(a[1]);
             int n = 0;
-            for (Pig b : plugin.manager().all()) {
+            for (LivingEntity b : plugin.manager().all()) {
                 if (b.getWorld() == p.getWorld() && b.getLocation().distanceSquared(p.getLocation()) <= r * r) { plugin.manager().remove(b); n++; }
             }
             ok(s, "Removed " + n + " vehicle(s) within " + r + " blocks.");
             return;
         }
-        Pig target = null;
+        LivingEntity target = null;
         var ray = p.getWorld().rayTraceEntities(p.getEyeLocation(), p.getEyeLocation().getDirection(), 12, e -> plugin.manager().baseOf(e) != null);
         if (ray != null && ray.getHitEntity() != null) target = plugin.manager().baseOf(ray.getHitEntity());
         if (target == null) {
             double best = 8 * 8;
-            for (Pig b : plugin.manager().all()) {
+            for (LivingEntity b : plugin.manager().all()) {
                 if (b.getWorld() != p.getWorld()) continue;
                 double d = b.getLocation().distanceSquared(p.getLocation());
                 if (d < best) { best = d; target = b; }
@@ -232,7 +232,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         VehicleType t = plugin.types().get(a[1]);
         if (t == null) { err(s, "No vehicle type '" + a[1] + "'."); return; }
         int n = 0;
-        for (Pig b : plugin.manager().all()) if (t.id.equals(plugin.manager().typeIdOf(b))) { plugin.manager().remove(b); n++; }
+        for (LivingEntity b : plugin.manager().all()) if (t.id.equals(plugin.manager().typeIdOf(b))) { plugin.manager().remove(b); n++; }
         plugin.types().delete(t.id);
         ok(s, "Deleted type '" + t.id + "' and removed " + n + " spawned vehicle(s).");
     }
@@ -242,7 +242,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         ok(s, "Vehicle types:");
         for (VehicleType t : plugin.types().all()) {
             int live = 0;
-            for (Pig b : plugin.manager().all()) if (t.id.equals(plugin.manager().typeIdOf(b))) live++;
+            for (LivingEntity b : plugin.manager().all()) if (t.id.equals(plugin.manager().typeIdOf(b))) live++;
             s.sendMessage(Component.text(" - " + t.id + "  \"" + t.name + "\"  model=" + (t.model.isEmpty() ? "(none)" : t.model) + "  seats=" + t.seats.size() + "  speed=" + t.maxSpeed + "  spawned=" + live, NamedTextColor.GRAY));
         }
     }

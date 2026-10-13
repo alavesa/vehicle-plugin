@@ -8,7 +8,7 @@ import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.Pig;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -65,7 +65,7 @@ public final class VehicleListener implements Listener {
     /** Right-click anywhere on the vehicle (its hitbox or a seat's click box) to take the nearest free seat. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onClickAt(PlayerInteractAtEntityEvent event) {
-        Pig base = manager.baseOf(event.getRightClicked());
+        LivingEntity base = manager.baseOf(event.getRightClicked());
         if (base == null) return;
         event.setCancelled(true);
         if (event.getHand() != EquipmentSlot.HAND) return;
@@ -106,7 +106,7 @@ public final class VehicleListener implements Listener {
         if (manager.baseOf(event.getRightClicked()) != null) event.setCancelled(true);
     }
 
-    private boolean tryPickup(Player player, Pig base, VehicleType type) {
+    private boolean tryPickup(Player player, LivingEntity base, VehicleType type) {
         if (!plugin.getConfig().getBoolean("pickup-enabled", true)) return false;
         UUID owner = manager.ownerOf(base);
         boolean allowed = player.hasPermission("vehicle.admin") || (owner != null && owner.equals(player.getUniqueId()));
@@ -155,7 +155,7 @@ public final class VehicleListener implements Listener {
     public void onHorn(PlayerSwapHandItemsEvent event) {
         Player p = event.getPlayer();
         if (!(p.getVehicle() instanceof ArmorStand stand) || !stand.getScoreboardTags().contains(VehicleManager.TAG_SEAT)) return;
-        Pig base = manager.baseOf(stand);
+        LivingEntity base = manager.baseOf(stand);
         if (base == null) return;
         event.setCancelled(true);
         VehicleType type = manager.typeOf(base);
@@ -169,14 +169,14 @@ public final class VehicleListener implements Listener {
         if (!(event.getEntity() instanceof Player player)) return;
         if (!(event.getDismounted() instanceof ArmorStand stand) || !stand.getScoreboardTags().contains(VehicleManager.TAG_SEAT)) return;
         task.forget(player.getUniqueId());
-        Pig base = manager.baseOf(stand);
+        LivingEntity base = manager.baseOf(stand);
         if (base == null || !plugin.getConfig().getBoolean("drive.exit-beside", true)) return;
         VehicleType type = manager.typeOf(base);
         if (type == null) return;
         UUID baseId = base.getUniqueId();
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (!player.isOnline() || player.getVehicle() != null) return;
-            if (!(Bukkit.getEntity(baseId) instanceof Pig b)) return;
+            if (!(Bukkit.getEntity(baseId) instanceof LivingEntity b)) return;
             double rad = Math.toRadians(task.yawOf(b));
             Vector right = new Vector(-Math.cos(rad), 0, -Math.sin(rad));
             double dist = type.hitbox / 2.0 + 0.8;
@@ -197,8 +197,8 @@ public final class VehicleListener implements Listener {
     public void onDamage(EntityDamageEvent event) {
         Entity e = event.getEntity();
         if (VehicleManager.isBase(e)) {
-            Pig base = (Pig) e;
-            if (!isCombat(event.getCause())) { event.setCancelled(true); return; }
+            LivingEntity base = (LivingEntity) e;
+            if (manager.invincible() || !isCombat(event.getCause())) { event.setCancelled(true); return; }
             if (base.getHealth() - event.getFinalDamage() <= 0.0) {
                 event.setCancelled(true);
                 if (plugin.getConfig().getBoolean("crash.destroy-at-zero-health", true)) manager.destroy(base);
@@ -218,12 +218,18 @@ public final class VehicleListener implements Listener {
             || c == EntityDamageEvent.DamageCause.CUSTOM;
     }
 
+    /** Nobody equips, undresses or poses the car (the base and the seats are armor stands). */
+    @EventHandler(ignoreCancelled = true)
+    public void onManipulate(org.bukkit.event.player.PlayerArmorStandManipulateEvent event) {
+        if (VehicleManager.isBase(event.getRightClicked()) || VehicleManager.isPart(event.getRightClicked())) event.setCancelled(true);
+    }
+
     @EventHandler
     public void onDeath(EntityDeathEvent event) {
         if (!VehicleManager.isBase(event.getEntity())) return;
         event.getDrops().clear();
         event.setDroppedExp(0);
-        Pig base = (Pig) event.getEntity();
+        LivingEntity base = (LivingEntity) event.getEntity();
         Bukkit.getScheduler().runTask(plugin, () -> { for (Entity p : manager.parts(base)) { p.eject(); p.remove(); } });
     }
 

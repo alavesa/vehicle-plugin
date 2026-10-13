@@ -2,7 +2,7 @@ package com.CodDev.vehicle;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.entity.Pig;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
@@ -87,7 +87,9 @@ public final class VehiclePlugin extends JavaPlugin {
     }
 
     public void reapplyAll() {
-        for (Pig base : manager.all()) {
+        for (LivingEntity base : manager.all()) {
+            base = manager.migrateLegacy(base);
+            if (base == null) continue;
             VehicleType t = manager.typeOf(base);
             if (t != null) manager.applyType(base, t);
         }

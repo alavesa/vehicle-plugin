@@ -14,7 +14,6 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Entity;
 import org.bukkit.GameMode;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Pig;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.util.BoundingBox;
@@ -65,12 +64,12 @@ public final class DriveTask implements Runnable {
     public void forget(UUID player) { inputs.remove(player); }
     public void forgetVehicle(UUID base) { states.remove(base); }
 
-    public double speedOf(Pig base) {
+    public double speedOf(LivingEntity base) {
         State st = states.get(base.getUniqueId());
         return st == null ? 0 : st.speed;
     }
 
-    public float yawOf(Pig base) {
+    public float yawOf(LivingEntity base) {
         State st = states.get(base.getUniqueId());
         return st == null ? base.getLocation().getYaw() : st.yaw;
     }
@@ -78,8 +77,9 @@ public final class DriveTask implements Runnable {
     @Override
     public void run() {
         tick++;
-        for (Pig base : manager.all()) {
+        for (LivingEntity base : manager.all()) {
             if (base.isDead()) continue;
+            if (base instanceof org.bukkit.entity.Pig) { manager.migrateLegacy(base); continue; }   // pre-1.5.0 vehicle
             VehicleType type = manager.typeOf(base);
             if (type == null) continue;   // type deleted while the entity survived: /vehicle remove cleans it up
             try {
@@ -96,13 +96,13 @@ public final class DriveTask implements Runnable {
         }
     }
 
-    private void tickVehicle(Pig base, VehicleType type) {
+    private void tickVehicle(LivingEntity base, VehicleType type) {
         State st = states.get(base.getUniqueId());
         if (st == null) {
             st = new State();
             st.yaw = base.getLocation().getYaw();
             st.momentum = new Vector();
-            base.setAware(false);
+            if (base instanceof org.bukkit.entity.Mob m) m.setAware(false);   // legacy pig bases only
             states.put(base.getUniqueId(), st);
         }
         List<VehicleManager.SeatRef> seats = manager.seats(base, type);
@@ -251,7 +251,7 @@ public final class DriveTask implements Runnable {
         st.last = base.getLocation();
     }
 
-    private void crash(Pig base, VehicleType type, State st, List<VehicleManager.SeatRef> seats, double impact) {
+    private void crash(LivingEntity base, VehicleType type, State st, List<VehicleManager.SeatRef> seats, double impact) {
         World world = base.getWorld();
         Location at = base.getLocation().add(0, 0.5, 0);
         double crashMin = plugin.getConfig().getDouble("crash.min-speed", 4.0);
@@ -276,7 +276,7 @@ public final class DriveTask implements Runnable {
         manager.hurt(base, vdmg);
     }
 
-    private void ram(Pig base, VehicleType type, State st, List<VehicleManager.SeatRef> seats, Vector forward, Player driver) {
+    private void ram(LivingEntity base, VehicleType type, State st, List<VehicleManager.SeatRef> seats, Vector forward, Player driver) {
         BoundingBox box = base.getBoundingBox().expand(0.25);
         double speed = Math.abs(st.speed);
         for (Entity e : base.getWorld().getNearbyEntities(box, x -> x instanceof LivingEntity && x != base && !VehicleManager.isPart(x))) {
@@ -289,10 +289,10 @@ public final class DriveTask implements Runnable {
             ramCooldown.put(e.getUniqueId(), tick + 20);
             if (VehicleManager.isBase(e)) {
                 // vehicle vs vehicle: both get hurt by the impact, the other is shoved along
-                VehicleType other = manager.typeOf((Pig) e);
+                VehicleType other = manager.typeOf((LivingEntity) e);
                 double dmg = speed * plugin.getConfig().getDouble("crash.vehicle-damage", 1.5) * 0.5;
                 e.setVelocity(forward.clone().multiply(speed / 20.0 * 0.8));
-                manager.hurt((Pig) e, other != null && other.crash ? dmg * other.crashMultiplier : 0);
+                manager.hurt((LivingEntity) e, other != null && other.crash ? dmg * other.crashMultiplier : 0);
                 manager.hurt(base, dmg * type.crashMultiplier);
                 base.getWorld().playSound(base.getLocation(), Sound.BLOCK_ANVIL_LAND, 0.9f, 0.5f);
                 st.speed *= 0.3;
@@ -308,7 +308,7 @@ public final class DriveTask implements Runnable {
         }
     }
 
-    private void hud(Player driver, Pig base, VehicleType type, double speed) {
+    private void hud(Player driver, LivingEntity base, VehicleType type, double speed) {
         float hue = (float) (0.33 - 0.33 * Math.min(1.0, speed / Math.max(1.0, type.maxSpeed)));
         TextColor color = TextColor.color(java.awt.Color.HSBtoRGB(hue, 0.85f, 1.0f));
         double hp = Math.max(0, base.getHealth()), max = manager.maxHealth(base);

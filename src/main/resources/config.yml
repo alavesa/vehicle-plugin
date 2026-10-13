@@ -17,6 +17,13 @@ bettermodel:
 # The resource pack is written to plugins/Vehicle/generated/Vehicle-pack.zip - host it yourself and
 # point your server.properties resource-pack / resource-pack-sha1 at it (sha1 is in Vehicle-pack.sha1).
 
+# Vehicles are invisible armor stands (gravity, block collision, step height, hitbox; no AI, no sounds). With
+# invincible: true they take no damage at all - players, bullets, explosions, fire, crashes and ramming leave them
+# intact. false = the health pool from before 1.5.0 (crash damage, destroyed at zero health). Vehicles made before
+# 1.5.0 (invisible pigs) are rebuilt as armor stands automatically when their chunk loads.
+invincible: true
+# hitbox (per type) is the HEIGHT of the collision box; an armor stand is 4x taller than wide, so the width is ~1/4.
+
 # The vanilla item whose look is replaced by the vehicle models (players never see it, only its models).
 base-item: minecraft:turtle_scute
 
