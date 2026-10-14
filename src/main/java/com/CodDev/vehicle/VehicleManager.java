@@ -135,7 +135,7 @@ public final class VehicleManager {
 
     /** Config `invincible` (default true): the vehicle takes no damage at all - not from players, bullets, explosions,
      *  fire, crashes or ramming. false = the old health pool (crash damage, destroyed at zero health). */
-    public boolean invincible() { return plugin.getConfig().getBoolean("invincible", true); }
+    public boolean invincible() { return plugin.getConfig().getBoolean("invincible", false); }
 
     /** The SCALE attribute that gives the base its `hitbox`: an armor stand is 0.5 x 1.975 blocks (4:1), so the hitbox
      *  value is its HEIGHT and the width comes out at about a quarter of it (a pig was 0.9 x 0.9, hitbox = both). */

@@ -41,6 +41,7 @@ public final class DriveTask implements Runnable {
         String bmAnim;           // BetterModel animation currently playing
         String lastModel;        // custom_model_data string the body currently shows
         float yaw;
+        double steer;            // -1 left, 0 straight, 1 right (driver input this tick)
         Vector momentum;         // last velocity set (blocks per tick)
         Location last;           // position at the end of the previous tick
         int crashCooldown;
@@ -94,6 +95,15 @@ public final class DriveTask implements Runnable {
             Iterator<Map.Entry<UUID, Integer>> it = ramCooldown.entrySet().iterator();
             while (it.hasNext()) if (it.next().getValue() < tick) it.remove();
         }
+    }
+
+    /** The driving state for the animation table: idle, drive, reverse, left, right, reverse_left, reverse_right. */
+    public static String driveState(double speed, double steer) {
+        if (Math.abs(speed) <= 0.3) return "idle";
+        boolean rev = speed < 0;
+        if (steer < 0) return rev ? "reverse_left" : "left";
+        if (steer > 0) return rev ? "reverse_right" : "right";
+        return rev ? "reverse" : "drive";
     }
 
     private void tickVehicle(LivingEntity base, VehicleType type) {
@@ -157,11 +167,13 @@ public final class DriveTask implements Runnable {
                 speed *= drive ? type.friction : 0.995;
             }
             double steer = (in.isLeft() ? -1 : 0) + (in.isRight() ? 1 : 0);
+            st.steer = steer;
             if (steer != 0 && Math.abs(speed) > 0.3) {
                 double g = Math.min(1.0, Math.abs(speed) / Math.max(0.1, type.maxSpeed * 0.3));
                 yaw += (float) (steer * type.turnRate * g * Math.signum(speed) * (drive ? 1.0 : 0.3));
             }
         } else {
+            st.steer = 0;
             speed *= onGround ? 0.92 : 0.995;                        // nobody driving: roll to a stop
         }
         double max = type.maxSpeed * surface, min = -type.maxSpeed * type.reverseFactor * surface;
@@ -176,7 +188,7 @@ public final class DriveTask implements Runnable {
             manager.ensureTracker(base, type);
             var tracker = manager.tracker(base);
             boolean moving = Math.abs(speed) > 0.3;
-            String anim = moving ? type.driveAnimation : type.idleAnimation;
+            String anim = type.animationFor(driveState(speed, st.steer));
             double full = plugin.getConfig().getDouble("drive.animation-full-speed", 0);
             if (full <= 0) full = Math.max(0.1, type.maxSpeed);
             st.animRate = (float) (moving && plugin.getConfig().getBoolean("drive.animation-follows-speed", true) ? Math.max(0.15, Math.min(3.0, Math.abs(speed) / full)) : 1.0);
@@ -193,7 +205,7 @@ public final class DriveTask implements Runnable {
         // ---- animation frames baked from the .bbmodel (drive-animation while moving, idle-animation at rest)
         if (type.model != null && !type.model.isEmpty()) {
             boolean moving = Math.abs(speed) > 0.3;
-            String anim = moving ? type.driveAnimation : type.idleAnimation;
+            String anim = type.animationFor(driveState(speed, st.steer));
             String want = type.model;
             if (anim != null && !anim.isEmpty()) {
                 int[] a = plugin.animation(type.model, anim);

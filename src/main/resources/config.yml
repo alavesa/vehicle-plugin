@@ -10,6 +10,12 @@ bettermodel:
   # own scale attribute, which is the hitbox, is ignored).
   yaw-offset: 0
 
+# Driving animations per type (types.yml animations: idle/drive/reverse/left/right/reverse_left/reverse_right, set
+# with /vehicle edit <car> animation <state> <name>). Unset states fall back: left/right/reverse -> drive,
+# reverse_left -> reverse -> left -> drive. Under BetterModel the sync also moves every free-rotated cube of a
+# .bbmodel into its own bone (BetterModel approximates free cube rotations and deforms them); /vehicle check <model>
+# shows what the BetterModel copy contains.
+
 # Vehicle plugin configuration
 #
 # Models: put your Blockbench files into plugins/Vehicle/models/<name>.bbmodel and restart the server
@@ -19,9 +25,9 @@ bettermodel:
 
 # Vehicles are invisible armor stands (gravity, block collision, step height, hitbox; no AI, no sounds). With
 # invincible: true they take no damage at all - players, bullets, explosions, fire, crashes and ramming leave them
-# intact. false = the health pool from before 1.5.0 (crash damage, destroyed at zero health). Vehicles made before
-# 1.5.0 (invisible pigs) are rebuilt as armor stands automatically when their chunk loads.
-invincible: true
+# intact. false (default) = the health pool (crash damage, destroyed at zero health). Vehicles made before 1.5.0
+# (invisible pigs) are rebuilt as armor stands automatically when their chunk loads.
+invincible: false
 # hitbox (per type) is the HEIGHT of the collision box; an armor stand is 4x taller than wide, so the width is ~1/4.
 
 # The vanilla item whose look is replaced by the vehicle models (players never see it, only its models).

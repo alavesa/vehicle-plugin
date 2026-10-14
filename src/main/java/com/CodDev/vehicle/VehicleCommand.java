@@ -40,6 +40,15 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                 case "create" -> create(sender, args);
                 case "edit" -> edit(sender, args);
                 case "spawn" -> spawn(sender, args);
+                case "check" -> {
+                    if (args.length < 2) { err(sender, "Usage: /vehicle check <model>"); return true; }
+                    java.io.File f = new java.io.File(new java.io.File(plugin.getDataFolder(), "models"), args[1] + ".bbmodel");
+                    if (!f.exists()) { err(sender, "No models/" + args[1] + ".bbmodel"); return true; }
+                    if (plugin.bridge() == null) { err(sender, "BetterModel is not active - /vehicle check is for the BetterModel copy of a model."); return true; }
+                    ok(sender, "BetterModel check of " + args[1] + " (served as " + plugin.bridge().key(args[1]) + "):");
+                    for (String n : plugin.bridge().check(f)) ok(sender, "  " + n);
+                    ok(sender, "  loaded by BetterModel: " + (plugin.bridge().has(args[1]) ? "yes, animations " + plugin.bridge().animations(args[1]) : "NO - see BetterModel's console warnings"));
+                }
                 case "remove" -> remove(sender, args);
                 case "delete" -> delete(sender, args);
                 case "list" -> list(sender);
@@ -111,21 +120,20 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
             case "animation", "anim" -> {
                 String sub = v[0].toLowerCase(java.util.Locale.ROOT);
                 java.util.Set<String> names = plugin.bmActive() ? plugin.bridge().animations(t.model) : plugin.animationNames(t.model);
-                switch (sub) {
-                    case "list" -> { ok(s, "Animations in model '" + t.model + "': " + (names.isEmpty() ? "(none - the .bbmodel has no animations, or the pack was built in baked mode)" : String.join(", ", names))); return; }
-                    case "clear", "none" -> { t.driveAnimation = ""; t.idleAnimation = ""; }
-                    case "set", "drive" -> {
-                        if (v.length < 2) { err(s, "Usage: animation set <animation name>   (animation list shows them)"); return; }
-                        t.driveAnimation = v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
-                        if (plugin.bmActive() ? !plugin.bridge().hasAnimation(t.model, v[1]) : !names.contains(t.driveAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
-                    }
-                    case "idle" -> {
-                        if (v.length < 2) { err(s, "Usage: animation idle <animation name>"); return; }
-                        t.idleAnimation = v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
-                        if (plugin.bmActive() ? !plugin.bridge().hasAnimation(t.model, v[1]) : !names.contains(t.idleAnimation)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
-                    }
-                    default -> { err(s, "Usage: animation set <name> | idle <name> | clear | list"); return; }
-                }
+                String stateKey = VehicleType.stateKey(sub);
+                if (sub.equals("list")) {
+                    ok(s, "Animations in model '" + t.model + "': " + (names.isEmpty() ? "(none - the .bbmodel has no animations, or the pack was built in baked mode)" : String.join(", ", names)));
+                    StringBuilder b = new StringBuilder();
+                    for (String st : VehicleType.STATES) b.append(st).append("=").append(t.animations.getOrDefault(st, "").isEmpty() ? "-" : t.animations.get(st)).append("  ");
+                    ok(s, "States: " + b + "(unset states fall back: left/right/reverse -> drive, reverse_left -> reverse -> left -> drive)");
+                } else if (sub.equals("clear") || sub.equals("none")) {
+                    if (v.length >= 2 && VehicleType.stateKey(v[1]) != null) t.animations.remove(VehicleType.stateKey(v[1])); else t.animations.clear();
+                } else if (stateKey != null) {
+                    if (v.length < 2) { err(s, "Usage: animation " + stateKey + " <animation name>   (animation list shows them)"); return; }
+                    String name = plugin.bmActive() ? v[1] : v[1].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
+                    t.animations.put(stateKey, name);
+                    if (plugin.bmActive() ? !plugin.bridge().hasAnimation(t.model, v[1]) : !names.contains(name)) ok(s, "Note: '" + v[1] + "' is not in the pack for model '" + t.model + "'. Known: " + String.join(", ", names));
+                } else { err(s, "Usage: animation <idle|drive|reverse|left|right|reverse_left|reverse_right> <name> | clear [state] | list"); return; }
             }
             case "offset" -> {
                 if (v.length < 3) { err(s, "Usage: offset <x> <y> <z>"); return; }
@@ -311,10 +319,10 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                 if (args.length == 2) return filter(ids, args[1]);
                 if (sub.equals("edit")) {
                     if (args.length == 3) return filter(PROPS, args[2]);
-                    if (args.length == 4 && (args[2].equalsIgnoreCase("animation") || args[2].equalsIgnoreCase("anim"))) return filter(List.of("set", "idle", "clear", "list"), args[3]);
+                    if (args.length == 4 && (args[2].equalsIgnoreCase("animation") || args[2].equalsIgnoreCase("anim"))) return filter(new ArrayList<>(java.util.stream.Stream.concat(VehicleType.STATES.stream(), java.util.stream.Stream.of("set", "clear", "list")).toList()), args[3]);
                     if (args.length == 5 && (args[2].equalsIgnoreCase("animation") || args[2].equalsIgnoreCase("anim"))) {
                         VehicleType tt = plugin.types().get(args[1].toLowerCase(java.util.Locale.ROOT));
-                        return tt == null ? List.of() : filter(new ArrayList<>(plugin.animationNames(tt.model)), args[4]);
+                        return tt == null ? List.of() : filter(new ArrayList<>(plugin.bmActive() ? plugin.bridge().animations(tt.model) : plugin.animationNames(tt.model)), args[4]);
                     }
                     String prop = args[2].toLowerCase(Locale.ROOT);
                     if (args.length == 4 && prop.equals("model")) return filter(PackGenerator.scanNames(plugin), args[3]);

@@ -54,7 +54,7 @@ public final class ModelBridge {
             File target = new File(bm, key(name) + ".bbmodel");
             wanted.add(target.getName());
             try {
-                byte[] data = Files.readAllBytes(f.toPath());
+                byte[] data = prepare(f, name);
                 if (!target.exists() || !java.util.Arrays.equals(data, Files.readAllBytes(target.toPath()))) { Files.write(target.toPath(), data); changed++; }
             } catch (Exception e) { plugin.getLogger().warning("Could not copy " + f.getName() + " to BetterModel: " + e); }
         }
@@ -64,6 +64,107 @@ public final class ModelBridge {
             try { BetterModelBukkit.platform().reload(); } catch (Throwable t) { plugin.getLogger().warning("BetterModel reload failed: " + t); }
         }
         return changed;
+    }
+
+    // ------------------------------------------------------------------ BetterModel-safe model files
+
+    /** A cube rotation a Java item model can hold as-is: one axis only, a multiple of 22.5 within -45..45. */
+    public static boolean javaRotation(double[] r) {
+        int axes = 0;
+        for (double v : r) {
+            if (Math.abs(v) < 1e-6) continue;
+            axes++;
+            if (Math.abs(v) > 45 + 1e-6 || Math.abs(v / 22.5 - Math.round(v / 22.5)) > 1e-4) return false;
+        }
+        return axes <= 1;
+    }
+
+    /** The .bbmodel bytes handed to BetterModel. Every cube whose rotation is not a legal Java element rotation is
+     *  moved into its own bone (origin = the cube's own pivot, rotation = the cube's rotation, cube rotation zeroed):
+     *  a bone rotation is exact in BetterModel, a free cube rotation is approximated and comes out deformed. */
+    byte[] prepare(File f, String name) throws java.io.IOException {
+        String text = Files.readString(f.toPath());
+        com.google.gson.JsonObject root;
+        try { root = com.google.gson.JsonParser.parseString(text).getAsJsonObject(); } catch (Exception e) { return text.getBytes(java.nio.charset.StandardCharsets.UTF_8); }
+        java.util.List<String> notes = new java.util.ArrayList<>();
+        int wrapped = rewrite(root, notes);
+        for (String n : notes) plugin.getLogger().info("BetterModel model " + key(name) + ": " + n);
+        if (wrapped == 0) return text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(root).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** Analyse + fix a Blockbench model object in place; returns the number of cubes wrapped into bones. */
+    static int rewrite(com.google.gson.JsonObject root, java.util.List<String> notes) {
+        java.util.Map<String, com.google.gson.JsonObject> wrap = new java.util.LinkedHashMap<>();   // cube uuid -> new group
+        int cubes = 0, meshes = 0, big = 0;
+        if (root.has("elements") && root.get("elements").isJsonArray()) for (var el : root.getAsJsonArray("elements")) {
+            if (!el.isJsonObject()) continue;
+            com.google.gson.JsonObject e = el.getAsJsonObject();
+            String type = e.has("type") ? e.get("type").getAsString() : "cube";
+            if (type.equals("mesh")) { meshes++; continue; }
+            if (!type.equals("cube")) continue;
+            cubes++;
+            if (e.has("from") && e.has("to")) {
+                double[] fr = vec(e.get("from")), to = vec(e.get("to"));
+                for (int i = 0; i < 3; i++) if (Math.abs(to[i] - fr[i]) > 48) { big++; break; }
+            }
+            if (!e.has("rotation") || !e.get("rotation").isJsonArray()) continue;
+            double[] r = vec(e.get("rotation"));
+            if (javaRotation(r)) continue;
+            com.google.gson.JsonObject g = new com.google.gson.JsonObject();
+            String cname = e.has("name") ? e.get("name").getAsString() : "cube";
+            g.addProperty("name", cname + "_rot");
+            g.add("origin", e.has("origin") ? e.get("origin").deepCopy() : arr(8, 8, 8));
+            g.add("rotation", e.get("rotation").deepCopy());
+            g.addProperty("uuid", java.util.UUID.randomUUID().toString());
+            g.addProperty("export", true); g.addProperty("visibility", true); g.addProperty("isOpen", false); g.addProperty("autouv", 0);
+            com.google.gson.JsonArray ch = new com.google.gson.JsonArray(); ch.add(e.get("uuid").getAsString()); g.add("children", ch);
+            e.add("rotation", arr(0, 0, 0));
+            wrap.put(e.get("uuid").getAsString(), g);
+        }
+        int wrappedCount = wrap.size();
+        if (!wrap.isEmpty() && root.has("outliner")) root.add("outliner", wrapOutliner(root.getAsJsonArray("outliner"), wrap));
+        // cubes never reached through the outliner still get wrapped by appending their groups at the root
+        if (!wrap.isEmpty()) { if (!root.has("outliner")) root.add("outliner", new com.google.gson.JsonArray()); for (var g : wrap.values()) root.getAsJsonArray("outliner").add(g); }
+        notes.add(cubes + " cube(s), " + meshes + " mesh(es)" + (wrappedCount == 0 ? "" : ", " + wrappedCount + " free-rotated cube(s) moved into their own bones") + (big > 0 ? ", " + big + " cube(s) over 48 px long (BetterModel scales those bones down - check them)" : ""));
+        return wrappedCount;
+    }
+
+    private static com.google.gson.JsonArray wrapOutliner(com.google.gson.JsonArray list, java.util.Map<String, com.google.gson.JsonObject> wrap) {
+        com.google.gson.JsonArray out = new com.google.gson.JsonArray();
+        for (var el : list) {
+            if (el.isJsonPrimitive()) {
+                com.google.gson.JsonObject g = wrap.remove(el.getAsString());
+                out.add(g != null ? g : el);
+            } else if (el.isJsonObject()) {
+                com.google.gson.JsonObject g = el.getAsJsonObject();
+                if (g.has("children") && g.get("children").isJsonArray()) g.add("children", wrapOutliner(g.getAsJsonArray("children"), wrap));
+                out.add(g);
+            } else out.add(el);
+        }
+        return out;
+    }
+
+    private static double[] vec(com.google.gson.JsonElement e) {
+        double[] v = new double[3];
+        if (e != null && e.isJsonArray()) for (int i = 0; i < 3 && i < e.getAsJsonArray().size(); i++) try { v[i] = e.getAsJsonArray().get(i).getAsDouble(); } catch (Exception ignored) { }
+        return v;
+    }
+    private static com.google.gson.JsonArray arr(double a, double b, double c) { com.google.gson.JsonArray x = new com.google.gson.JsonArray(); x.add(a); x.add(b); x.add(c); return x; }
+
+    /** /vehicle check <model>: what the BetterModel copy of a model looks like. */
+    public java.util.List<String> check(File f) {
+        java.util.List<String> notes = new java.util.ArrayList<>();
+        try {
+            com.google.gson.JsonObject root = com.google.gson.JsonParser.parseString(Files.readString(f.toPath())).getAsJsonObject();
+            String fmt = root.has("meta") && root.getAsJsonObject("meta").has("format_version") ? root.getAsJsonObject("meta").get("format_version").getAsString() : "?";
+            String mf = root.has("meta") && root.getAsJsonObject("meta").has("model_format") ? root.getAsJsonObject("meta").get("model_format").getAsString() : "?";
+            notes.add("Blockbench " + fmt + ", format " + mf + (mf.equals("java_block") ? " (Java Block/Item: Blockbench itself limits rotations; prefer Generic Model for BetterModel)" : ""));
+            rewrite(root, notes);
+            int anims = root.has("animations") && root.get("animations").isJsonArray() ? root.getAsJsonArray("animations").size() : 0;
+            notes.add(anims + " animation(s)");
+        } catch (Exception e) { notes.add("not readable as a .bbmodel: " + e); }
+        return notes;
     }
 
     public boolean has(String model) { return model != null && !model.isEmpty() && BetterModel.model(key(model)).isPresent(); }

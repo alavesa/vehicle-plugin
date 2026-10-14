@@ -38,8 +38,35 @@ public final class VehicleType {
     public double scale = 1.0;            // model scale
     public double modelYaw = 180.0;       // rotation of the model around the vehicle (180 = Blockbench front/north faces forward)
     public double offsetX = 0, offsetY = 0, offsetZ = 0;   // nudge the body relative to the physics base
-    public String driveAnimation = "";    // .bbmodel animation (baked by the pack) looping while the vehicle moves
-    public String idleAnimation = "";     // ... while it stands still
+    /** Driving states and which .bbmodel animation loops in each (empty = fall back, see animationFor). */
+    public static final List<String> STATES = List.of("idle", "drive", "reverse", "left", "right", "reverse_left", "reverse_right");
+    public final java.util.Map<String, String> animations = new java.util.LinkedHashMap<>();
+
+    /** Fallback chain: reverse_left -> reverse -> left -> drive; left/right/reverse -> drive; idle -> nothing. */
+    private static final java.util.Map<String, List<String>> FALLBACK = java.util.Map.of(
+        "idle", List.of("idle"),
+        "drive", List.of("drive"),
+        "reverse", List.of("reverse", "drive"),
+        "left", List.of("left", "drive"),
+        "right", List.of("right", "drive"),
+        "reverse_left", List.of("reverse_left", "reverse", "left", "drive"),
+        "reverse_right", List.of("reverse_right", "reverse", "right", "drive"));
+
+    /** The animation to play in a driving state ("" = none). */
+    public String animationFor(String state) {
+        for (String k : FALLBACK.getOrDefault(state, List.of(state))) {
+            String a = animations.get(k);
+            if (a != null && !a.isEmpty()) return a;
+        }
+        return "";
+    }
+
+    /** Normalise a state word typed by a player: "reverse-left", "backward left", "back_right" ... -> the STATES key. */
+    public static String stateKey(String word) {
+        String w = word.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\\-]+", "_").replace("backwards", "reverse").replace("backward", "reverse").replace("back", "reverse").replace("forward", "drive").replace("set", "drive");
+        if (w.equals("reverse_reverse")) w = "reverse";
+        return STATES.contains(w) ? w : null;
+    }
 
     // physics
     public double hitbox = 1.8;           // collision box width (and height) in blocks
@@ -77,8 +104,11 @@ public final class VehicleType {
         grip = s.getDouble("grip", grip);
         scale = s.getDouble("scale", scale);
         modelYaw = s.getDouble("model-yaw", modelYaw);
-        driveAnimation = s.getString("drive-animation", driveAnimation);
-        idleAnimation = s.getString("idle-animation", idleAnimation);
+        animations.clear();
+        ConfigurationSection an = s.getConfigurationSection("animations");
+        if (an != null) for (String k : an.getKeys(false)) { String key = stateKey(k); if (key != null) animations.put(key, an.getString(k, "")); }
+        if (!s.getString("drive-animation", "").isEmpty() && !animations.containsKey("drive")) animations.put("drive", s.getString("drive-animation"));   // pre-1.6 keys
+        if (!s.getString("idle-animation", "").isEmpty() && !animations.containsKey("idle")) animations.put("idle", s.getString("idle-animation"));
         offsetX = s.getDouble("offset.x", offsetX);
         offsetY = s.getDouble("offset.y", offsetY);
         offsetZ = s.getDouble("offset.z", offsetZ);
@@ -119,8 +149,9 @@ public final class VehicleType {
         s.set("grip", grip);
         s.set("scale", scale);
         s.set("model-yaw", modelYaw);
-        s.set("drive-animation", driveAnimation);
-        s.set("idle-animation", idleAnimation);
+        s.set("drive-animation", null); s.set("idle-animation", null);
+        s.set("animations", null);
+        for (var en : animations.entrySet()) if (!en.getValue().isEmpty()) s.set("animations." + en.getKey(), en.getValue());
         s.set("offset.x", offsetX);
         s.set("offset.y", offsetY);
         s.set("offset.z", offsetZ);
