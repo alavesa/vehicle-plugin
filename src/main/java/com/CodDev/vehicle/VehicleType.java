@@ -86,8 +86,34 @@ public final class VehicleType {
     public VehicleType(String id) {
         this.id = id.toLowerCase(Locale.ROOT);
         this.name = id;
+        seats.add(new Seat(-0.4, 0.4, 0.3));   // driver: LEFT side (+x is the vehicle's right)
         seats.add(new Seat(0.4, 0.4, 0.3));
-        seats.add(new Seat(-0.4, 0.4, 0.3));
+    }
+
+    /** Seats closer than this (x/z) count as overlapping. */
+    public static final double SEAT_MIN_GAP = 0.45;
+
+    /** Seats that sit on top of each other (x/z closer than SEAT_MIN_GAP): pairs of 1-based numbers. */
+    public static List<int[]> overlappingSeats(List<Seat> seats) {
+        List<int[]> out = new ArrayList<>();
+        for (int i = 0; i < seats.size(); i++) for (int j = i + 1; j < seats.size(); j++)
+            if (Math.hypot(seats.get(i).x - seats.get(j).x, seats.get(i).z - seats.get(j).z) < SEAT_MIN_GAP) out.add(new int[]{i + 1, j + 1});
+        return out;
+    }
+
+    /** The first free slot of the even grid (rows 0.9 blocks apart behind the first seat, left seat then right seat)
+     *  that does not overlap an existing seat - so edited seats are never buried under new ones. */
+    public static double[] freeSeatSlot(List<Seat> seats) {
+        double z0 = seats.isEmpty() ? 0.3 : seats.get(0).z;
+        for (int row = 0; row < 64; row++) {
+            for (double x : new double[]{-0.4, 0.4}) {
+                double z = Math.round((z0 - 0.9 * row) * 1000.0) / 1000.0;
+                boolean taken = false;
+                for (Seat o : seats) if (Math.hypot(o.x - x, o.z - z) < SEAT_MIN_GAP) { taken = true; break; }
+                if (!taken) return new double[]{x, z};
+            }
+        }
+        return new double[]{0, z0 - 0.9 * 64};
     }
 
     public static boolean validId(String id) { return id != null && id.matches("[a-zA-Z0-9_-]{1,32}"); }
@@ -181,12 +207,10 @@ public final class VehicleType {
         n = Math.max(1, Math.min(16, n));
         while (seats.size() > n) seats.remove(seats.size() - 1);
         while (seats.size() < n) {
-            Seat last = seats.get(seats.size() - 1);
+            Seat last = seats.isEmpty() ? new Seat(-0.4, 0.4, 0.3) : seats.get(seats.size() - 1);
             Seat next = last.copy();
-            // alternate sides, move back a row every two seats
-            int i = seats.size();
-            next.x = (i % 2 == 0 ? 0.4 : -0.4);
-            next.z = Math.round((last.z - (i % 2 == 0 ? 0.9 : 0)) * 1000.0) / 1000.0;
+            double[] slot = freeSeatSlot(seats);
+            next.x = slot[0]; next.z = slot[1];
             seats.add(next);
         }
     }

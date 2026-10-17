@@ -148,7 +148,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
             case "sound" -> t.sound = v[0].equalsIgnoreCase("none") ? "" : v[0];
             case "volume" -> t.soundVolume = Math.max(0, Math.min(4, Double.parseDouble(v[0])));
             case "horn" -> t.horn = v[0].equalsIgnoreCase("none") ? "" : v[0];
-            case "seats" -> t.setSeatCount(Integer.parseInt(v[0]));
+            case "seats" -> { t.setSeatCount(Integer.parseInt(v[0])); for (int[] o : VehicleType.overlappingSeats(t.seats)) ok(s, "Note: seats " + o[0] + " and " + o[1] + " overlap - move one with: seat <n> <x> <y> <z>"); }
             case "seatsize" -> {
                 if (v.length < 2) { err(s, "Usage: seatsize <width> <height>"); return; }
                 double w = Double.parseDouble(v[0]), h = Double.parseDouble(v[1]);
@@ -164,6 +164,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                     if (v.length < 3) { err(s, "Usage: seat <n> " + k + " <value>"); return; }
                     double val = Double.parseDouble(v[2]);
                     if (k.equals("x")) seat.x = val; else if (k.equals("y")) seat.y = val; else seat.z = val;
+                    for (int[] o : VehicleType.overlappingSeats(t.seats)) ok(s, "Note: seats " + o[0] + " and " + o[1] + " overlap");
                 } else if (k.equals("size")) {
                     if (v.length < 4) { err(s, "Usage: seat <n> size <width> <height>"); return; }
                     seat.width = Math.max(0.1, Math.min(8, Double.parseDouble(v[2])));

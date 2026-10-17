@@ -42,6 +42,10 @@ public final class DriveTask implements Runnable {
         String lastModel;        // custom_model_data string the body currently shows
         float yaw;
         double steer;            // -1 left, 0 straight, 1 right (driver input this tick)
+        double pitch, roll;      // body tilt in degrees: pitch > 0 nose up, roll > 0 right side up (left side down)
+        double wRoll, wPitch;    // angular velocity (deg/tick) while airborne / flipping
+        boolean flipped;         // lying on its roof
+        int flipAge;
         Vector momentum;         // last velocity set (blocks per tick)
         Location last;           // position at the end of the previous tick
         int crashCooldown;
@@ -68,6 +72,17 @@ public final class DriveTask implements Runnable {
     public double speedOf(LivingEntity base) {
         State st = states.get(base.getUniqueId());
         return st == null ? 0 : st.speed;
+    }
+
+    public double pitchOf(LivingEntity base) { State st = states.get(base.getUniqueId()); return st == null ? 0 : st.pitch; }
+    public double rollOf(LivingEntity base) { State st = states.get(base.getUniqueId()); return st == null ? 0 : st.roll; }
+    public boolean isFlipped(LivingEntity base) { State st = states.get(base.getUniqueId()); return st != null && st.flipped; }
+    /** Put a car that lies on its roof back on its wheels. */
+    public void unflip(LivingEntity base) {
+        State st = states.get(base.getUniqueId());
+        if (st == null) return;
+        st.flipped = false; st.roll = 0; st.pitch = 0; st.wRoll = 0; st.wPitch = 0; st.flipAge = 0;
+        base.setVelocity(new Vector(0, 0.3, 0));
     }
 
     public float yawOf(LivingEntity base) {
@@ -155,7 +170,7 @@ public final class DriveTask implements Runnable {
         float yaw = st.yaw;
         double accel = type.acceleration / 20.0, brake = type.brake / 20.0;
         double surface = inWater ? plugin.getConfig().getDouble("drive.water-speed-factor", 0.3) : 1.0;
-        if (in != null) {
+        if (in != null && !st.flipped) {
             boolean drive = onGround || inWater;
             if (in.isJump()) {
                 speed *= 0.85;                                       // handbrake
@@ -240,6 +255,10 @@ public final class DriveTask implements Runnable {
         base.setVelocity(vel);
         base.setRotation(yaw, 0);
 
+        // ---- body orientation: four corner probes find the ground plane, the body follows it; airborne it keeps
+        //      turning with its angular velocity; a hard sideways crash or a bad landing rolls it onto its roof
+        if (plugin.getConfig().getBoolean("physics.enabled", true)) tilt(base, type, st, seats, at, yaw, onGround, vy);
+
         // ---- ramming things in the way
         if (type.crash && Math.abs(speed) >= 2.0) ram(base, type, st, seats, forward, driver);
 
@@ -263,10 +282,89 @@ public final class DriveTask implements Runnable {
         st.last = base.getLocation();
     }
 
+    // ------------------------------------------------------------------ orientation physics
+
+    /** Highest solid surface under (x, z) between y+1.5 and y-3, or NaN when there is none (a drop). */
+    static double groundAt(World w, double x, double y, double z) {
+        int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
+        for (int by = (int) Math.floor(y + 1.5); by >= (int) Math.floor(y - 3); by--) {
+            Block b = w.getBlockAt(bx, by, bz);
+            if (b.isPassable()) continue;
+            double top = by;
+            for (org.bukkit.util.BoundingBox box : b.getCollisionShape().getBoundingBoxes()) top = Math.max(top, by + box.getMaxY());
+            return top;
+        }
+        return Double.NaN;
+    }
+
+    /** Pitch/roll (degrees) of the plane through four corner heights: {pitch, roll}; nose up / right side up positive. */
+    static double[] planeAngles(double fl, double fr, double bl, double br, double halfLength, double halfWidth) {
+        double pitch = Math.toDegrees(Math.atan2((fl + fr) / 2 - (bl + br) / 2, 2 * halfLength));
+        double roll = Math.toDegrees(Math.atan2((fr + br) / 2 - (fl + bl) / 2, 2 * halfWidth));
+        return new double[]{pitch, roll};
+    }
+
+    static double approach(double cur, double target, double rate) { return cur + (target - cur) * Math.max(0, Math.min(1, rate)); }
+
+    private void tilt(LivingEntity base, VehicleType type, State st, List<VehicleManager.SeatRef> seats, Location at, float yaw, boolean onGround, double vy) {
+        double rate = plugin.getConfig().getDouble("physics.tilt-rate", 0.25);
+        double maxTilt = plugin.getConfig().getDouble("physics.max-ground-tilt", 50);
+        double hw = type.hitbox * 0.45, hl = type.hitbox * 0.55;
+        double rad = Math.toRadians(yaw);
+        // corner (sx right, sz forward) -> world, same frame as the seats
+        double[][] corners = {{-hw, hl}, {hw, hl}, {-hw, -hl}, {hw, -hl}};   // FL FR BL BR
+        double[] h = new double[4];
+        boolean allGround = true;
+        for (int i = 0; i < 4; i++) {
+            double wx = at.getX() + (-corners[i][1] * Math.sin(rad) + corners[i][0] * Math.cos(rad));
+            double wz = at.getZ() + ( corners[i][1] * Math.cos(rad) + corners[i][0] * Math.sin(rad));
+            h[i] = groundAt(at.getWorld(), wx, at.getY(), wz);
+            if (Double.isNaN(h[i])) allGround = false;
+        }
+        if (st.flipped) {
+            // on the roof: settle flat on the surface, upside down, and slide to a stop
+            st.flipAge++;
+            double target = st.roll >= 0 ? 180 : -180;
+            st.roll = approach(st.roll, target, 0.2);
+            double[] ang = allGround ? planeAngles(h[0], h[1], h[2], h[3], hl, hw) : new double[]{0, 0};
+            st.pitch = approach(st.pitch, -Math.max(-maxTilt, Math.min(maxTilt, ang[0])), 0.2);
+            st.speed *= 0.9;
+            return;
+        }
+        if (onGround && allGround) {
+            double[] ang = planeAngles(h[0], h[1], h[2], h[3], hl, hw);
+            st.pitch = approach(st.pitch, Math.max(-maxTilt, Math.min(maxTilt, ang[0])), rate);
+            st.roll = approach(st.roll + st.wRoll, Math.max(-maxTilt, Math.min(maxTilt, ang[1])), rate);
+            st.wRoll *= 0.6; st.wPitch *= 0.6;
+        } else {
+            // airborne (or over a drop): the nose follows the flight path, the roll keeps spinning
+            double airPitch = Math.toDegrees(Math.atan2(vy * 20.0, Math.max(1.0, Math.abs(st.speed))));
+            st.pitch = approach(st.pitch + st.wPitch, Math.max(-80, Math.min(80, airPitch)), plugin.getConfig().getDouble("physics.air-pitch-rate", 0.08));
+            st.roll += st.wRoll;
+            st.wRoll *= 0.985; st.wPitch *= 0.985;
+        }
+        if (st.roll > 180) st.roll -= 360; if (st.roll < -180) st.roll += 360;
+        // past the tipping point and touching down: it stays on its roof
+        if (Math.abs(st.roll) > plugin.getConfig().getDouble("physics.tip-angle", 95) && onGround) {
+            st.flipped = true; st.flipAge = 0; st.wRoll = 0; st.wPitch = 0;
+            st.speed = 0; st.momentum = new Vector();
+            for (VehicleManager.SeatRef seat : seats) { Player p = seat.rider(); if (p != null) { seat.stand().eject(); p.sendActionBar(Component.text("The vehicle flipped over! Sneak + right-click it to turn it back.", NamedTextColor.RED)); } }
+            base.getWorld().playSound(at, Sound.BLOCK_ANVIL_LAND, 1f, 0.6f);
+        }
+    }
+
     private void crash(LivingEntity base, VehicleType type, State st, List<VehicleManager.SeatRef> seats, double impact) {
         World world = base.getWorld();
         Location at = base.getLocation().add(0, 0.5, 0);
         double crashMin = plugin.getConfig().getDouble("crash.min-speed", 4.0);
+        // a hard crash can throw the car onto its side: roll impulse + a hop, the rest happens in tilt()
+        double flipSpeed = plugin.getConfig().getDouble("physics.flip-speed", 8.0);
+        if (plugin.getConfig().getBoolean("physics.enabled", true) && impact >= flipSpeed && Math.random() < plugin.getConfig().getDouble("physics.flip-chance", 0.6)) {
+            double torque = plugin.getConfig().getDouble("physics.flip-torque", 11.0) * Math.min(2.0, impact / flipSpeed);
+            st.wRoll = (st.steer != 0 ? -st.steer : (Math.random() < 0.5 ? -1 : 1)) * torque;
+            st.wPitch = (Math.random() - 0.5) * torque * 0.4;
+            base.setVelocity(base.getVelocity().setY(0.45));
+        }
         st.crashCooldown = 10;
         st.speed = -st.speed * 0.1;
         st.momentum = new Vector();

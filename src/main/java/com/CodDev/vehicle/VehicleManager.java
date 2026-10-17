@@ -42,6 +42,9 @@ import java.util.UUID;
  */
 public final class VehicleManager {
 
+    /** Tilt applied by seatLocation during tickParts (0 elsewhere, e.g. when seats are placed at spawn). */
+    private double seatPitch, seatRoll;
+
     /** BetterModel trackers per vehicle base (only used when BetterModel renders the bodies). */
     private final java.util.Map<java.util.UUID, kr.toxicity.model.api.tracker.EntityTracker> trackers = new java.util.HashMap<>();
 
@@ -54,7 +57,10 @@ public final class VehicleManager {
         if (!bridge.has(type.model)) return;
         // the model turns with the base every tick (DriveTask sets its rotation); the LivingEntity's own body yaw never follows
         // (no AI), so BetterModel's default body-yaw tracking is replaced by the base yaw + model-yaw
-        var t = bridge.attach(base, type.model, () -> ModelBridge.modelYaw(base.getLocation().getYaw(), type.modelYaw, bridge.yawOffset()), type.scale);
+        var t = bridge.attach(base, type.model, () -> {
+            double[] pr = ModelBridge.bmRotation(plugin.task().pitchOf(base), plugin.task().rollOf(base), plugin.getConfig().getDouble("physics.pitch-sign", 1));
+            return new float[]{ (float) pr[0], ModelBridge.modelYaw(base.getLocation().getYaw() + (float) pr[1], type.modelYaw, bridge.yawOffset()) };
+        }, type.scale);
         if (t == null) return;
         trackers.put(base.getUniqueId(), t);
         // a vehicle that existed before BetterModel still carries the item model on its body: hide it, BetterModel draws
@@ -442,13 +448,16 @@ public final class VehicleManager {
     public void tickParts(LivingEntity base, VehicleType type, float yaw, List<SeatRef> seats) {
         Location at = base.getLocation();
         ItemDisplay body = body(base);
+        double pitch = plugin.task().pitchOf(base), roll = plugin.task().rollOf(base);
         if (body != null) {
             Location bl = at.clone();
             bl.setYaw((float) (yaw + type.modelYaw));
             bl.setPitch(0);
             body.teleport(bl);
+            if (plugin.bridge() == null) applyTilt(body, type, pitch, roll);
         }
         double riderOffset = plugin.getConfig().getDouble("seat-rider-offset", 0.6);
+        seatPitch = pitch; seatRoll = roll;
         for (SeatRef seat : seats) {
             VehicleType.Seat s = seat.index() < type.seats.size() ? type.seats.get(seat.index()) : type.seats.get(type.seats.size() - 1);
             Location sl = seatLocation(at, type, s, yaw);
@@ -463,11 +472,45 @@ public final class VehicleManager {
             Location cl = sl.clone().add(0, 0.5 - h / 2.0, 0);
             c.teleport(cl);
         }
+        seatPitch = 0; seatRoll = 0;
+    }
+
+    /** The body's rest transformation (fit scale + Blockbench origin at the base) with the tilt applied around the
+     *  body centre: display = translation + L * (scale * v), so L = Ry(-modelYaw) Rx(pitch) Rz(roll) Ry(modelYaw) in
+     *  the display's own frame and translation' = c - L c + L t_fit with c = the centre (half the hitbox up). */
+    private void applyTilt(ItemDisplay d, VehicleType type, double pitch, double roll) {
+        Transformation cur = d.getTransformation();
+        Vector3f tfit = restTranslation(type);
+        float ps = (float) plugin.getConfig().getDouble("physics.pitch-sign", 1), rs = (float) plugin.getConfig().getDouble("physics.roll-sign", 1);
+        float my = (float) Math.toRadians(type.modelYaw);
+        Quaternionf L = new Quaternionf().rotateY(-my).rotateX((float) Math.toRadians(pitch) * ps).rotateZ((float) Math.toRadians(roll) * rs).rotateY(my);
+        Vector3f c = new Vector3f(0f, (float) (type.hitbox * 0.5), 0f);
+        Vector3f t = new Vector3f(c).sub(L.transform(new Vector3f(c))).add(L.transform(new Vector3f(tfit)));
+        if (Math.abs(pitch) < 0.01 && Math.abs(roll) < 0.01) { t = tfit; L = new Quaternionf(); }
+        if (!cur.getLeftRotation().equals(L, 1e-4f) || cur.getTranslation().distance(t) > 1e-4) d.setTransformation(new Transformation(t, L, cur.getScale(), new Quaternionf()));
+    }
+
+    private Vector3f restTranslation(VehicleType type) {
+        PackGenerator.ModelInfo mi = plugin.modelInfo(type.model);
+        double tx = mi != null ? mi.tx() : 0.5, ty = mi != null ? mi.ty() : 0.5, tz = mi != null ? mi.tz() : 0.5;
+        return new Vector3f((float) (tx * type.scale + type.offsetX), (float) (ty * type.scale + type.offsetY), (float) (tz * type.scale + type.offsetZ));
+    }
+
+    /** Seat offset (right, up, forward in the vehicle's frame) tilted with the body around its centre: {dx, dy, dz} world. */
+    static double[] tiltedOffset(double right, double up, double forward, double pitchDeg, double rollDeg, double centreY) {
+        double p = Math.toRadians(pitchDeg), r = Math.toRadians(rollDeg);
+        double y = up - centreY;
+        // roll about the forward axis (right/up), then pitch about the right axis (up/forward)
+        double x1 = right * Math.cos(r) - y * Math.sin(r), y1 = right * Math.sin(r) + y * Math.cos(r);
+        double y2 = y1 * Math.cos(p) + forward * Math.sin(p), z2 = -y1 * Math.sin(p) + forward * Math.cos(p);
+        return new double[]{x1, y2 + centreY, z2};
     }
 
     /** World position of a seat: model-space offset (scaled, nudged by the type offset) rotated with the body. */
     public Location seatLocation(Location base, VehicleType type, VehicleType.Seat s, float yaw) {
         double lx = s.x * type.scale + type.offsetX, ly = s.y * type.scale + type.offsetY, lz = s.z * type.scale + type.offsetZ;
+        double pitch = seatPitch, roll = seatRoll;
+        if (pitch != 0 || roll != 0) { double[] o = tiltedOffset(lx, ly, -lz, pitch, roll, type.hitbox * 0.5); lx = o[0]; ly = o[1]; lz = -o[2]; }
         double rad = Math.toRadians(yaw + type.modelYaw);
         double cos = Math.cos(rad), sin = Math.sin(rad);
         double wx = lx * cos - lz * sin;

@@ -16,6 +16,27 @@ bettermodel:
 # .bbmodel into its own bone (BetterModel approximates free cube rotations and deforms them); /vehicle check <model>
 # shows what the BetterModel copy contains.
 
+# Body physics: four corner probes read the ground under the car and the body tilts to that plane (slopes, stairs,
+# ramps); airborne it keeps its spin and the nose follows the flight path; a crash at >= flip-speed blocks/s can roll
+# it over (flip-chance), and past tip-angle it lands on its roof: no driving, riders are put out, sneak + right-click
+# turns it back. pitch-sign / roll-sign: set -1 if a tilt shows mirrored on your models. Under BetterModel only
+# pitch and "on the roof" can be shown (its API has no roll).
+physics:
+  enabled: true
+  tilt-rate: 0.25          # how fast the body settles onto the ground plane (fraction per tick)
+  max-ground-tilt: 50      # degrees of slope the body follows
+  air-pitch-rate: 0.08
+  flip-speed: 8.0
+  flip-chance: 0.6
+  flip-torque: 11.0        # degrees per tick of roll a flipping crash gives
+  tip-angle: 95            # roll beyond this when touching down = on the roof
+  pitch-sign: 1
+  roll-sign: 1
+
+# Seats: seat 1 is the driver on the LEFT (x negative = left, positive = right, z positive = forward, in blocks before
+# the type's scale). /vehicle edit <car> seats <n> adds seats on an even grid (left, right, next row) skipping any spot
+# an existing seat occupies; /vehicle edit <car> seat <n> <x> <y> <z> moves one; overlaps are reported.
+
 # Vehicle plugin configuration
 #
 # Models: put your Blockbench files into plugins/Vehicle/models/<name>.bbmodel and restart the server

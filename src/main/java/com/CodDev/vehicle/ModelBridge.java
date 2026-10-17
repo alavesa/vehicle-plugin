@@ -208,12 +208,21 @@ public final class ModelBridge {
 
     /** Attach the model to an entity; BetterModel then follows the entity. yawSupplier = the ABSOLUTE model yaw per tick
      *  (see modelYaw), scale = the model scale (independent of the entity's scale attribute). */
-    public EntityTracker attach(Entity base, String model, Supplier<Float> yawSupplier, double scale) {
+    /** BetterModel only has pitch + yaw. Roll past 90 degrees (on the roof) is shown as pitch 180 - pitch with the yaw
+     *  turned 180 (Rz(180) = Ry(180) Rx(180)); smaller rolls cannot be shown and are dropped. Returns {bmPitch, yawAdd}. */
+    public static double[] bmRotation(double pitch, double roll, double pitchSign) {
+        double p = -pitch * pitchSign;   // entity pitch: positive = nose down
+        if (Math.abs(roll) > 90) return new double[]{180 - p, 180};
+        return new double[]{p, 0};
+    }
+
+    /** rotSupplier = {pitch, absolute yaw} per tick (degrees). */
+    public EntityTracker attach(Entity base, String model, Supplier<float[]> rotSupplier, double scale) {
         Optional<ModelRenderer> r = BetterModel.model(key(model));
         if (r.isEmpty()) return null;
         EntityTracker t = r.get().create(BukkitAdapter.adapt(base), new TrackerModifier(true, false, false));
         t.scaler(kr.toxicity.model.api.tracker.ModelScaler.value(modelScale(scale)));
-        if (yawSupplier != null) t.rotation(() -> new ModelRotation(0f, yawSupplier.get()));
+        if (rotSupplier != null) t.rotation(() -> { float[] pr = rotSupplier.get(); return new ModelRotation(pr[0], pr[1]); });
         return t;
     }
 

@@ -74,6 +74,11 @@ public final class VehicleListener implements Listener {
         if (type == null) return;
         if (!player.hasPermission("vehicle.use")) return;
         if (player.getVehicle() != null) return;
+        if (task.isFlipped(base)) {
+            if (player.isSneaking()) { task.unflip(base); player.sendActionBar(Component.text("Vehicle turned back onto its wheels.", NamedTextColor.GREEN)); }
+            else player.sendActionBar(Component.text("It is lying on its roof - sneak + right-click to turn it back.", NamedTextColor.YELLOW));
+            return;
+        }
         if (player.isSneaking() && tryPickup(player, base, type)) return;
 
         Location click = event.getRightClicked().getLocation().add(event.getClickedPosition());
