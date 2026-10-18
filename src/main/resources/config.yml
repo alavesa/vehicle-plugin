@@ -33,6 +33,25 @@ physics:
   pitch-sign: 1
   roll-sign: 1
 
+# Helicopters (/vehicle create <id> <model> helicopter, or /vehicle edit <id> kind helicopter). Controls: W up, S down, A/D turn,
+# space = accelerate, sneak (left shift) = slow down, then fly backwards. Sneak only gets you out when the helicopter is on the
+# ground; double-tap sneak bails out in the air. The first W or space starts the engine; the rotor needs spool-time seconds before
+# the helicopter lifts. Lift/descent speeds are per type (/vehicle edit <id> lift <b/s>, descent <b/s>). Helicopters share the
+# crash, ram, fall and flip physics of cars: a hard crash or a hard landing can roll one onto its roof.
+helicopter:
+  spool-time: 1.5          # seconds from engine start to lift-off
+  idle-stop: 6.0           # seconds parked on the ground with no input before the engine shuts down (0 = never)
+  engine-off-when-empty: true
+  max-altitude: 0          # highest Y a helicopter can climb to (0 = the world's build height)
+  air-grip: 0.08           # how fast the flight direction follows the nose while airborne (cars use the type's grip)
+  air-friction: 0.995      # per-tick forward speed factor in the air when neither accelerating nor braking
+  bank-angle: 18           # degrees of roll in a turn
+  nose-angle: 12           # degrees of pitch (nose down) at full forward speed
+  tilt-rate: 0.12          # how fast the body leans into bank/nose angles
+  hard-landing: 7.0        # touching down faster than this (blocks/s) hurts the helicopter and its riders (crash.fall-damage per block/s)
+  bail-out-ticks: 8        # two sneak presses within this many ticks = bail out mid-air
+  rotor-wash: true         # dust under a helicopter hovering close to the ground
+
 # Seats: seat 1 is the driver on the LEFT (x negative = left, positive = right, z positive = forward, in blocks before
 # the type's scale). /vehicle edit <car> seats <n> adds seats on an even grid (left, right, next row) skipping any spot
 # an existing seat occupies; /vehicle edit <car> seat <n> <x> <y> <z> moves one; overlaps are reported.

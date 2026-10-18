@@ -4,13 +4,13 @@ main: com.CodDev.vehicle.VehiclePlugin
 api-version: '1.21'
 softdepend: [BetterModel]
 author: CodDev
-description: Drivable vehicles with Blockbench models - WASD driving, seats, hitbox and crash physics, generated resource pack.
+description: Drivable vehicles and helicopters with Blockbench models - WASD driving, flying, seats, hitbox and crash physics, generated resource pack.
 commands:
   vehicle:
     description: Create, edit, spawn and remove vehicles
     aliases: [veh, vehicles]
     usage: |
-      /vehicle create <id> [model]
+      /vehicle create <id> [model] [car|helicopter]
       /vehicle edit <id> <property> <value...>
       /vehicle spawn <id>
       /vehicle remove [radius|all]

@@ -25,6 +25,14 @@ public final class VehicleType {
     /** Model name = file name of plugins/Vehicle/models/<model>.bbmodel (empty = no body). */
     public String model = "";
 
+    /** false = a land vehicle (car), true = a helicopter: W/S climb and descend, A/D turn, space accelerates, sneak slows down. */
+    public boolean helicopter = false;
+    public double lift = 5.0;             // helicopter: climb speed, blocks per second (W)
+    public double descent = 6.0;          // helicopter: descent speed, blocks per second (S)
+
+    public static final String CAR_SOUND = "minecraft:entity.minecart.riding";
+    public static final String HELICOPTER_SOUND = "minecraft:entity.ender_dragon.flap";
+
     // driving
     public double maxSpeed = 10.0;        // blocks per second
     public double acceleration = 6.0;     // blocks/s gained per second of throttle
@@ -39,18 +47,24 @@ public final class VehicleType {
     public double modelYaw = 180.0;       // rotation of the model around the vehicle (180 = Blockbench front/north faces forward)
     public double offsetX = 0, offsetY = 0, offsetZ = 0;   // nudge the body relative to the physics base
     /** Driving states and which .bbmodel animation loops in each (empty = fall back, see animationFor). */
-    public static final List<String> STATES = List.of("idle", "drive", "reverse", "left", "right", "reverse_left", "reverse_right");
+    public static final List<String> STATES = List.of("idle", "drive", "reverse", "left", "right", "reverse_left", "reverse_right",
+        "start", "hover", "ascend", "descend");   // the last four are helicopter states (engine spooling up, hovering, climbing, descending)
     public final java.util.Map<String, String> animations = new java.util.LinkedHashMap<>();
 
-    /** Fallback chain: reverse_left -> reverse -> left -> drive; left/right/reverse -> drive; idle -> nothing. */
-    private static final java.util.Map<String, List<String>> FALLBACK = java.util.Map.of(
-        "idle", List.of("idle"),
-        "drive", List.of("drive"),
-        "reverse", List.of("reverse", "drive"),
-        "left", List.of("left", "drive"),
-        "right", List.of("right", "drive"),
-        "reverse_left", List.of("reverse_left", "reverse", "left", "drive"),
-        "reverse_right", List.of("reverse_right", "reverse", "right", "drive"));
+    /** Fallback chain: reverse_left -> reverse -> left -> drive; left/right/reverse -> drive; idle -> nothing.
+     *  Helicopter states start/hover/ascend/descend -> drive (so one "rotor" animation set as drive covers all of them). */
+    private static final java.util.Map<String, List<String>> FALLBACK = java.util.Map.ofEntries(
+        java.util.Map.entry("idle", List.of("idle")),
+        java.util.Map.entry("drive", List.of("drive")),
+        java.util.Map.entry("reverse", List.of("reverse", "drive")),
+        java.util.Map.entry("left", List.of("left", "drive")),
+        java.util.Map.entry("right", List.of("right", "drive")),
+        java.util.Map.entry("reverse_left", List.of("reverse_left", "reverse", "left", "drive")),
+        java.util.Map.entry("reverse_right", List.of("reverse_right", "reverse", "right", "drive")),
+        java.util.Map.entry("start", List.of("start", "drive")),
+        java.util.Map.entry("hover", List.of("hover", "drive")),
+        java.util.Map.entry("ascend", List.of("ascend", "drive")),
+        java.util.Map.entry("descend", List.of("descend", "drive")));
 
     /** The animation to play in a driving state ("" = none). */
     public String animationFor(String state) {
@@ -63,9 +77,37 @@ public final class VehicleType {
 
     /** Normalise a state word typed by a player: "reverse-left", "backward left", "back_right" ... -> the STATES key. */
     public static String stateKey(String word) {
-        String w = word.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\\-]+", "_").replace("backwards", "reverse").replace("backward", "reverse").replace("back", "reverse").replace("forward", "drive").replace("set", "drive");
+        String w = word.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\\-]+", "_");
+        switch (w) {   // helicopter words
+            case "up", "climb", "rise", "takeoff", "take_off": return "ascend";
+            case "down", "sink", "land", "landing": return "descend";
+            case "spool", "startup", "start_up", "engine", "starting": return "start";
+            case "fly", "flying", "forward": return "drive";
+            default: break;
+        }
+        w = w.replace("backwards", "reverse").replace("backward", "reverse").replace("back", "reverse").replace("forward", "drive").replace("set", "drive");
         if (w.equals("reverse_reverse")) w = "reverse";
         return STATES.contains(w) ? w : null;
+    }
+
+    /** Switch between car and helicopter. The engine sound follows along if it is still the other kind's default. */
+    public void setHelicopter(boolean heli) {
+        if (heli == helicopter) return;
+        helicopter = heli;
+        if (heli && CAR_SOUND.equals(sound)) sound = HELICOPTER_SOUND;
+        if (!heli && HELICOPTER_SOUND.equals(sound)) sound = CAR_SOUND;
+    }
+
+    public String kind() { return helicopter ? "helicopter" : "car"; }
+
+    /** "helicopter", "heli", "chopper", "air" -> true; "car", "land", "ground", "vehicle" -> false; anything else -> null. */
+    public static Boolean kindFromWord(String word) {
+        if (word == null) return null;
+        switch (word.toLowerCase(java.util.Locale.ROOT)) {
+            case "helicopter", "heli", "chopper", "air", "aircraft": return true;
+            case "car", "land", "ground", "vehicle", "truck": return false;
+            default: return null;
+        }
     }
 
     // physics
@@ -121,6 +163,9 @@ public final class VehicleType {
     public void load(ConfigurationSection s) {
         name = s.getString("name", name);
         model = s.getString("model", model);
+        helicopter = s.getBoolean("helicopter", "helicopter".equalsIgnoreCase(s.getString("kind", helicopter ? "helicopter" : "car")));
+        lift = s.getDouble("lift", lift);
+        descent = s.getDouble("descent", descent);
         maxSpeed = s.getDouble("max-speed", maxSpeed);
         acceleration = s.getDouble("acceleration", acceleration);
         brake = s.getDouble("brake", brake);
@@ -166,6 +211,10 @@ public final class VehicleType {
     public void save(ConfigurationSection s) {
         s.set("name", name);
         s.set("model", model);
+        s.set("kind", kind());
+        s.set("helicopter", null);
+        s.set("lift", lift);
+        s.set("descent", descent);
         s.set("max-speed", maxSpeed);
         s.set("acceleration", acceleration);
         s.set("brake", brake);

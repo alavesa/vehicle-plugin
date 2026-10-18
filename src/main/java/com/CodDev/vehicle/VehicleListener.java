@@ -56,9 +56,9 @@ public final class VehicleListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         task.forget(event.getPlayer().getUniqueId());
-        // leave the seat so the stand is not saved inside the player's data
+        // leave the seat so the stand is not saved inside the player's data (always allowed, even mid-air)
         if (event.getPlayer().getVehicle() instanceof ArmorStand stand && stand.getScoreboardTags().contains(VehicleManager.TAG_SEAT)) {
-            event.getPlayer().leaveVehicle();
+            task.forced(() -> event.getPlayer().leaveVehicle());
         }
     }
 
@@ -101,8 +101,10 @@ public final class VehicleListener implements Listener {
         }
         chosen.stand().addPassenger(player);
         player.sendActionBar(Component.text(chosen.index() == 0
-            ? "You're driving: W/S throttle, A/D steer, space = brake, sneak = get out, F = horn"
-            : "Passenger seat " + (chosen.index() + 1) + ". Sneak to get out.", NamedTextColor.GRAY));
+            ? (type.helicopter
+                ? "You're flying: W/S up/down, A/D turn, space = accelerate, sneak = slow down (on the ground: get out, double-tap = bail out), F = horn"
+                : "You're driving: W/S throttle, A/D steer, space = brake, sneak = get out, F = horn")
+            : "Passenger seat " + (chosen.index() + 1) + ". Sneak to get out" + (type.helicopter ? " once landed (double-tap to bail out)." : "."), NamedTextColor.GRAY));
     }
 
     /** The plain interact event fires too - cancel it so the pig is never saddled/bred/named. */
@@ -168,15 +170,20 @@ public final class VehicleListener implements Listener {
         try { base.getWorld().playSound(base.getLocation(), type.horn, 1.5f, 1.0f); } catch (Exception ignored) { }
     }
 
-    /** Sneak = get out. Afterwards step out beside the vehicle rather than on top of it. */
-    @EventHandler
+    /** Sneak = get out. In a flying helicopter sneak means "slow down": the dismount is refused until it has landed (or the
+     *  rider double-taps sneak to bail out). Afterwards step out beside the vehicle rather than on top of it. */
+    @EventHandler(ignoreCancelled = true)
     public void onDismount(EntityDismountEvent event) {
         if (!(event.getEntity() instanceof Player player)) return;
         if (!(event.getDismounted() instanceof ArmorStand stand) || !stand.getScoreboardTags().contains(VehicleManager.TAG_SEAT)) return;
-        task.forget(player.getUniqueId());
         LivingEntity base = manager.baseOf(stand);
+        VehicleType type = base == null ? null : manager.typeOf(base);
+        if (base != null && type != null && type.helicopter && event.isCancellable() && !task.mayLeave(player, base, type)) {
+            event.setCancelled(true);
+            return;
+        }
+        task.forget(player.getUniqueId());
         if (base == null || !plugin.getConfig().getBoolean("drive.exit-beside", true)) return;
-        VehicleType type = manager.typeOf(base);
         if (type == null) return;
         UUID baseId = base.getUniqueId();
         Bukkit.getScheduler().runTask(plugin, () -> {
@@ -235,7 +242,7 @@ public final class VehicleListener implements Listener {
         event.getDrops().clear();
         event.setDroppedExp(0);
         LivingEntity base = (LivingEntity) event.getEntity();
-        Bukkit.getScheduler().runTask(plugin, () -> { for (Entity p : manager.parts(base)) { p.eject(); p.remove(); } });
+        Bukkit.getScheduler().runTask(plugin, () -> task.forced(() -> { for (Entity p : manager.parts(base)) { p.eject(); p.remove(); } }));
     }
 
     @EventHandler

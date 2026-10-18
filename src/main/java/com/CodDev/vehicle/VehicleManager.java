@@ -175,15 +175,20 @@ public final class VehicleManager {
     /** Remove a vehicle and all of its parts; riders are set free first. */
     public void remove(LivingEntity base) {
         closeTracker(base.getUniqueId());
-        for (Entity e : parts(base)) {
-            e.eject();
-            e.remove();
-        }
-        for (Entity p : new ArrayList<>(base.getPassengers())) if (isPart(p)) p.remove();
-        base.eject();
+        forced(() -> {
+            for (Entity e : parts(base)) {
+                e.eject();
+                e.remove();
+            }
+            for (Entity p : new ArrayList<>(base.getPassengers())) if (isPart(p)) p.remove();
+            base.eject();
+        });
         base.remove();
-        plugin.task().forgetVehicle(base.getUniqueId());
+        if (plugin.task() != null) plugin.task().forgetVehicle(base.getUniqueId());
     }
+
+    /** Dismounts the plugin performs itself (removal, destruction) must never be refused by the helicopter rules. */
+    private void forced(Runnable r) { if (plugin.task() != null) plugin.task().forced(r); else r.run(); }
 
     /** Boom: effects, then removal. */
     public void destroy(LivingEntity base) {
@@ -357,7 +362,7 @@ public final class VehicleManager {
         // extra seats go away (riders are set free)
         while (list.size() > want) {
             String[] ids = list.remove(list.size() - 1).split(",");
-            for (String id : ids) { Entity e = entity(id); if (e != null) { e.eject(); e.remove(); } }
+            forced(() -> { for (String id : ids) { Entity e = entity(id); if (e != null) { e.eject(); e.remove(); } } });
             changed = true;
         }
         for (int i = 0; i < want; i++) {
@@ -525,8 +530,7 @@ public final class VehicleManager {
                 if (!isPart(e)) continue;
                 LivingEntity base = baseOf(e);
                 if (base == null || !references(base, e)) {
-                    e.eject();
-                    e.remove();
+                    forced(() -> { e.eject(); e.remove(); });
                 }
             }
         }

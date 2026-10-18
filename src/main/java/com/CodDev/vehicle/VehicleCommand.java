@@ -19,9 +19,10 @@ import java.util.Locale;
 public final class VehicleCommand implements org.bukkit.command.CommandExecutor, TabCompleter {
 
     private static final List<String> SUBS = List.of("create", "edit", "spawn", "remove", "delete", "list", "info", "models", "give", "pack", "reload", "help");
-    private static final List<String> PROPS = List.of("name", "model", "speed", "acceleration", "brake", "reverse", "friction", "turn", "grip",
-        "scale", "modelyaw", "offset", "animation", "hitbox", "stepheight", "health", "crash", "crashdamage", "ramdamage", "sound", "volume", "horn",
+    private static final List<String> PROPS = List.of("name", "kind", "model", "speed", "acceleration", "brake", "reverse", "friction", "turn", "grip",
+        "lift", "descent", "scale", "modelyaw", "offset", "animation", "hitbox", "stepheight", "health", "crash", "crashdamage", "ramdamage", "sound", "volume", "horn",
         "seats", "seat", "seatsize");
+    private static final List<String> KINDS = List.of("car", "helicopter");
 
     private final VehiclePlugin plugin;
 
@@ -67,7 +68,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
 
     private void help(CommandSender s) {
         ok(s, "Commands:");
-        s.sendMessage(Component.text("/vehicle create <id> [model]   - new vehicle type", NamedTextColor.GRAY));
+        s.sendMessage(Component.text("/vehicle create <id> [model] [car|helicopter]   - new vehicle type (default: car)", NamedTextColor.GRAY));
         s.sendMessage(Component.text("/vehicle edit <id> <property> <value...>   - see /vehicle edit <id> for properties", NamedTextColor.GRAY));
         s.sendMessage(Component.text("/vehicle spawn <id>   - spawn one where you stand", NamedTextColor.GRAY));
         s.sendMessage(Component.text("/vehicle remove [radius|all]   - remove the vehicle you look at / nearby / all", NamedTextColor.GRAY));
@@ -76,16 +77,24 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
     }
 
     private void create(CommandSender s, String[] a) {
-        if (a.length < 2) { err(s, "Usage: /vehicle create <id> [model]"); return; }
+        if (a.length < 2) { err(s, "Usage: /vehicle create <id> [model] [car|helicopter]"); return; }
         if (!VehicleType.validId(a[1])) { err(s, "Ids may only use letters, numbers, _ and - (max 32)."); return; }
         if (plugin.types().exists(a[1])) { err(s, "Type '" + a[1] + "' already exists."); return; }
+        // the model and the kind may come in either order: create heli chopper helicopter / create heli helicopter chopper
+        String model = null; Boolean kind = null;
+        for (int i = 2; i < Math.min(a.length, 4); i++) {
+            Boolean k = VehicleType.kindFromWord(a[i]);
+            if (k != null && kind == null) kind = k; else if (model == null) model = a[i];
+        }
         VehicleType t = plugin.types().create(a[1]);
-        if (a.length >= 3) {
-            t.model = a[2];
-            if (plugin.modelInfo(a[2]) == null) ok(s, "Note: no model named '" + a[2] + "' was found in plugins/Vehicle/models/ - it will show once the file is there and the pack is regenerated.");
+        if (kind != null) t.setHelicopter(kind);
+        if (model != null) {
+            t.model = model;
+            if (!plugin.hasModel(model)) ok(s, "Note: no model named '" + model + "' was found in plugins/Vehicle/models/ - it will show once the file is there and the pack is regenerated.");
         }
         plugin.types().save();
-        ok(s, "Created vehicle type '" + t.id + "'" + (t.model.isEmpty() ? " (no model yet: /vehicle edit " + t.id + " model <name>)" : " with model '" + t.model + "'") + ". Spawn it with /vehicle spawn " + t.id);
+        ok(s, "Created " + t.kind() + " type '" + t.id + "'" + (t.model.isEmpty() ? " (no model yet: /vehicle edit " + t.id + " model <name>)" : " with model '" + t.model + "'") + ". Spawn it with /vehicle spawn " + t.id
+            + (t.helicopter ? "  -  W/S up/down, A/D turn, space accelerates, sneak slows down." : ""));
     }
 
     private void edit(CommandSender s, String[] a) {
@@ -94,7 +103,8 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         if (t == null) { err(s, "No vehicle type '" + a[1] + "'. /vehicle list"); return; }
         if (a.length < 3) {
             ok(s, "Properties for '" + t.id + "':");
-            s.sendMessage(Component.text("name <text> | model <bbmodel name> | speed <blocks/s> | acceleration <b/s²> | brake <b/s²> | reverse <0-1> | friction <0-1> | turn <deg/tick> | grip <0-1>", NamedTextColor.GRAY));
+            s.sendMessage(Component.text("name <text> | kind <car|helicopter> | model <bbmodel name> | speed <blocks/s> | acceleration <b/s²> | brake <b/s²> | reverse <0-1> | friction <0-1> | turn <deg/tick> | grip <0-1>", NamedTextColor.GRAY));
+            s.sendMessage(Component.text("helicopter: lift <blocks/s> (W) | descent <blocks/s> (S)", NamedTextColor.GRAY));
             s.sendMessage(Component.text("scale <n> | modelyaw <deg> | offset <x> <y> <z> | hitbox <blocks> | stepheight <blocks> | health <hp> | crash <true|false> | crashdamage <mult> | ramdamage <mult>", NamedTextColor.GRAY));
             s.sendMessage(Component.text("sound <key> | volume <n> | horn <key> | seats <count> | seat <n> <x> <y> <z> | seat <n> x|y|z <v> | seat <n> size <w> <h> | seatsize <w> <h>", NamedTextColor.GRAY));
             return;
@@ -104,6 +114,14 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         if (v.length == 0 && !prop.equals("name")) { err(s, "Missing value."); return; }
         switch (prop) {
             case "name" -> t.name = v.length == 0 ? t.id : String.join(" ", v);
+            case "kind", "type" -> {
+                Boolean k = VehicleType.kindFromWord(v[0]);
+                if (k == null) { err(s, "Usage: kind <car|helicopter>"); return; }
+                t.setHelicopter(k);
+                if (k) ok(s, "'" + t.id + "' is now a helicopter: W/S up/down, A/D turn, space accelerates, sneak slows down; sneak gets you out on the ground only. Climb/descent: lift <b/s>, descent <b/s>.");
+            }
+            case "lift", "climb" -> t.lift = Math.max(0.1, Math.min(60, Double.parseDouble(v[0])));
+            case "descent", "descend", "sink" -> t.descent = Math.max(0.1, Math.min(60, Double.parseDouble(v[0])));
             case "model" -> {
                 t.model = v[0];
                 if (!plugin.hasModel(v[0])) ok(s, "Note: no model named '" + v[0] + "' is " + (plugin.bmActive() ? "known to BetterModel yet (file in plugins/Vehicle/models? it is synced + reloaded on restart)" : "in the generated pack") + ". Models: " + String.join(", ", PackGenerator.scanNames(plugin)));
@@ -252,7 +270,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         for (VehicleType t : plugin.types().all()) {
             int live = 0;
             for (LivingEntity b : plugin.manager().all()) if (t.id.equals(plugin.manager().typeIdOf(b))) live++;
-            s.sendMessage(Component.text(" - " + t.id + "  \"" + t.name + "\"  model=" + (t.model.isEmpty() ? "(none)" : t.model) + "  seats=" + t.seats.size() + "  speed=" + t.maxSpeed + "  spawned=" + live, NamedTextColor.GRAY));
+            s.sendMessage(Component.text(" - " + t.id + "  \"" + t.name + "\"  " + t.kind() + "  model=" + (t.model.isEmpty() ? "(none)" : t.model) + "  seats=" + t.seats.size() + "  speed=" + t.maxSpeed + (t.helicopter ? "  lift=" + t.lift + "  descent=" + t.descent : "") + "  spawned=" + live, NamedTextColor.GRAY));
         }
     }
 
@@ -261,7 +279,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
         VehicleType t = plugin.types().get(a[1]);
         if (t == null) { err(s, "No vehicle type '" + a[1] + "'."); return; }
         PackGenerator.ModelInfo mi = plugin.modelInfo(t.model);
-        ok(s, t.id + " - \"" + t.name + "\"");
+        ok(s, t.id + " - \"" + t.name + "\"  (" + t.kind() + (t.helicopter ? ": lift=" + t.lift + " descent=" + t.descent + " blocks/s" : "") + ")");
         s.sendMessage(Component.text("model=" + (t.model.isEmpty() ? "(none)" : t.model + (mi == null ? " (NOT in pack)" : " (" + mi.cubes() + " cubes, " + Math.round(mi.maxX() - mi.minX()) + "x" + Math.round(mi.maxY() - mi.minY()) + "x" + Math.round(mi.maxZ() - mi.minZ()) + " px)")) + " scale=" + t.scale + " modelyaw=" + t.modelYaw + " offset=" + t.offsetX + "," + t.offsetY + "," + t.offsetZ, NamedTextColor.GRAY));
         s.sendMessage(Component.text("speed=" + t.maxSpeed + " acceleration=" + t.acceleration + " brake=" + t.brake + " reverse=" + t.reverseFactor + " friction=" + t.friction + " turn=" + t.turnRate + " grip=" + t.grip, NamedTextColor.GRAY));
         s.sendMessage(Component.text("hitbox=" + t.hitbox + " stepheight=" + t.stepHeight + " health=" + t.health + " crash=" + t.crash + " crashdamage=" + t.crashMultiplier + " ramdamage=" + t.ramMultiplier, NamedTextColor.GRAY));
@@ -328,6 +346,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                     String prop = args[2].toLowerCase(Locale.ROOT);
                     if (args.length == 4 && prop.equals("model")) return filter(PackGenerator.scanNames(plugin), args[3]);
                     if (args.length == 4 && prop.equals("crash")) return filter(List.of("true", "false"), args[3]);
+                    if (args.length == 4 && (prop.equals("kind") || prop.equals("type"))) return filter(KINDS, args[3]);
                     if (prop.equals("seat")) {
                         VehicleType t = plugin.types().get(args[1]);
                         if (args.length == 4 && t != null) { List<String> n = new ArrayList<>(); for (int i = 1; i <= t.seats.size(); i++) n.add(String.valueOf(i)); return filter(n, args[3]); }
@@ -335,7 +354,10 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                     }
                 }
             }
-            case "create" -> { if (args.length == 3) return filter(PackGenerator.scanNames(plugin), args[2]); }
+            case "create" -> {
+                if (args.length == 3) { List<String> o = new ArrayList<>(PackGenerator.scanNames(plugin)); o.addAll(KINDS); return filter(o, args[2]); }
+                if (args.length == 4) return filter(VehicleType.kindFromWord(args[2]) != null ? PackGenerator.scanNames(plugin) : KINDS, args[3]);
+            }
             case "give" -> {
                 if (args.length == 2) { for (Player p : Bukkit.getOnlinePlayers()) out.add(p.getName()); return filter(out, args[1]); }
                 if (args.length == 3) return filter(ids, args[2]);

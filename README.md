@@ -1,12 +1,13 @@
-# Vehicle — drivable Blockbench vehicles for Paper 26.x
+# Vehicle — drivable Blockbench vehicles and helicopters for Paper 26.x
 
-Create vehicle types in game, give them a `.bbmodel` body, spawn them, and drive with WASD.
+Create vehicle types in game, give them a `.bbmodel` body, spawn them, and drive with WASD —
+or make the type a helicopter and fly it.
 Real hitbox, crash and ram physics, multiple seats with adjustable positions, a generated
 resource pack you host yourself.
 
 ## Install
 
-1. Drop `Vehicle-1.0.0.jar` into `plugins/` (Paper 26.2, Java 25+).
+1. Drop `Vehicle-1.8.0.jar` into `plugins/` (delete any older `Vehicle-*.jar` first) (Paper 26.2, Java 25+).
 2. Start the server once: it creates `plugins/Vehicle/models/` and `plugins/Vehicle/generated/`.
 3. Put your Blockbench files into `plugins/Vehicle/models/` — `jeep.bbmodel` becomes the model `jeep`.
    Generic, Java block/item, Bedrock and GeckoLib formats all work (animations are ignored,
@@ -22,7 +23,7 @@ resource pack you host yourself.
 
 | Command | What it does |
 |---|---|
-| `/vehicle create <id> [model]` | new vehicle type |
+| `/vehicle create <id> [model] [car\|helicopter]` | new vehicle type (a car unless you say `helicopter`) |
 | `/vehicle edit <id> <property> <value…>` | change a type; applies live to spawned vehicles |
 | `/vehicle spawn <id>` | spawn one where you stand (console: `spawn <id> <x> <y> <z> [world]`) |
 | `/vehicle remove [radius\|all]` | remove the vehicle you look at, or all within a radius, or all |
@@ -38,6 +39,7 @@ resource pack you host yourself.
 | Property | Meaning | Default |
 |---|---|---|
 | `name <text>` | display name | id |
+| `kind <car\|helicopter>` | land vehicle or helicopter (see below) | car |
 | `model <name>` | `.bbmodel` file name (tab-completes) | none |
 | `speed <blocks/s>` | top speed | 10 |
 | `acceleration <b/s²>` | throttle | 6 |
@@ -46,6 +48,8 @@ resource pack you host yourself.
 | `friction <0-1>` | per-tick coast factor (lower = stops sooner) | 0.985 |
 | `turn <deg/tick>` | steering rate at speed | 3.5 |
 | `grip <0-1>` | 1 = follows the nose instantly, lower = slides | 0.6 |
+| `lift <blocks/s>` | helicopter climb speed (W) | 5 |
+| `descent <blocks/s>` | helicopter descent speed (S) | 6 |
 | `scale <n>` | model scale | 1 |
 | `modelyaw <deg>` | rotate the model on the vehicle; **if it drives backwards, set 0 or 180** | 180 |
 | `offset <x> <y> <z>` | nudge the model (blocks) | 0 0 0 |
@@ -71,6 +75,34 @@ Right-click anywhere on the vehicle (or a seat's click box) → nearest free sea
 drives. **W/S** throttle and brake/reverse, **A/D** steer, **space** handbrake, **sneak** to get
 out (you step out beside the vehicle), **F** horn. The driver sees speed and vehicle health on
 the action bar. Sneak + right-click an empty vehicle you placed to pick it up as an item.
+
+## Helicopters
+
+`/vehicle create heli <model> helicopter` (or `/vehicle edit <id> kind helicopter`) makes a type fly.
+Everything else is the same as a car: models, seats, items, pickup, health, crashes, ramming and flipping.
+
+| Key | In the air |
+|---|---|
+| **W** | climb (`lift` blocks/s) — the first press also starts the engine |
+| **S** | descend (`descent` blocks/s) |
+| **A / D** | turn, also on the spot while hovering |
+| **Space** | accelerate forward |
+| **Sneak (left shift)** | slow down, then fly backwards; **on the ground: get out**; **double-tap: bail out** mid-air |
+| **F** | horn |
+
+The rotor spools up for `helicopter.spool-time` seconds (config) before there is lift. With no vertical input
+the helicopter hovers; it cannot climb above `helicopter.max-altitude` (0 = build height). Parked with no
+input for `helicopter.idle-stop` seconds the engine shuts down; it also stops when the pilot leaves, so an
+abandoned helicopter in the air comes down. Flying into a wall is a crash exactly like a car's, flying into a
+ceiling just stops the climb, and touching down faster than `helicopter.hard-landing` blocks/s damages the
+helicopter and its riders and (like a hard crash) can roll it onto its roof — sneak + right-click turns it back.
+The pilot's action bar shows speed, climb/descent rate, altitude and engine state.
+
+Animations: besides the car states a helicopter has `start` (spooling), `hover`, `ascend` and `descend`; each
+falls back to `drive`, so one rotor animation set with `/vehicle edit <id> animation drive <name>` covers all of
+flight, and `idle` is the rotor at rest. The rotor animation speed follows the engine spool, not the ground speed.
+In the air the body leans: nose down with speed (`helicopter.nose-angle`) and banked into turns
+(`helicopter.bank-angle`); under BetterModel only the pitch can be shown.
 
 ## Physics
 
