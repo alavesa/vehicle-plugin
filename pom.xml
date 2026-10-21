@@ -6,7 +6,7 @@
 
   <groupId>com.CodDev</groupId>
   <artifactId>vehicle</artifactId>
-  <version>1.8.0</version>
+  <version>2.0.0</version>
   <packaging>jar</packaging>
 
   <name>Vehicle</name>
@@ -38,11 +38,11 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>kr.toxicity.model</groupId>
-      <artifactId>bettermodel</artifactId>
-      <version>3.5.0</version>
+      <groupId>ai.resourcepack</groupId>
+      <artifactId>rp-engine</artifactId>
+      <version>0.2.22</version>
       <scope>system</scope>
-      <systemPath>${project.basedir}/libs/bettermodel-3.5.0-paper.jar</systemPath>
+      <systemPath>${project.basedir}/libs/RPEngine-0.2.22.jar</systemPath>
     </dependency>
   </dependencies>
 

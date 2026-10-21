@@ -54,7 +54,7 @@ public final class VehiclePlugin extends JavaPlugin {
 
     /** Scan models/ and write generated/Vehicle-pack.zip. Safe to call again (/vehicle pack, /vehicle reload). */
     public PackGenerator.Result generatePack() {
-        // BetterModel installed: mirror our models into its folder (it builds the one pack) and let it render + animate.
+        // RP Engine installed: mirror our models into its folder (it builds the one pack) and let it render + animate.
         bmActive = false;
         if (ModelBridge.installed()) {
             bridge = new ModelBridge(this, "vehicle");
@@ -62,8 +62,8 @@ public final class VehiclePlugin extends JavaPlugin {
                 bmActive = true;
                 try {
                     int n = bridge.sync(PackGenerator.modelsDir(this));
-                    getLogger().info("BetterModel detected: vehicle models are rendered by BetterModel (" + n + " model file(s) synced to plugins/BetterModel/models, prefix vehicle_). Our own pack is not needed.");
-                } catch (Throwable t) { getLogger().warning("BetterModel sync failed, falling back to the built-in pack: " + t); bmActive = false; }
+                    getLogger().info("RP Engine detected: vehicle models are rendered by RP Engine (" + n + " model file(s) synced to plugins/RPEngine/content/vehicle/models). Our own pack is not needed.");
+                } catch (Throwable t) { getLogger().warning("RP Engine sync failed, falling back to the built-in pack: " + t); bmActive = false; }
             }
         }
         PackGenerator gen = new PackGenerator(this);
@@ -115,7 +115,7 @@ public final class VehiclePlugin extends JavaPlugin {
     public PackGenerator.ModelInfo modelInfo(String model) { return model == null ? null : models.get(model); }
     public ModelBridge bridge() { return bmActive ? bridge : null; }
     public boolean bmActive() { return bmActive; }
-    /** Is this model available to render (BetterModel or our pack)? */
+    /** Is this model available to render (RP Engine or our pack)? */
     public boolean hasModel(String model) { return bmActive ? bridge.has(model) : modelInfo(model) != null; }
     /** [frames, frame-ticks] of a model's animation, or null. */
     public int[] animation(String model, String anim) { if (model == null || anim == null) return null; Map<String, int[]> m = animations.get(model); return m == null ? null : m.get(anim); }

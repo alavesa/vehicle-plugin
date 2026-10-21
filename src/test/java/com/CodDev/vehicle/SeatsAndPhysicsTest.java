@@ -56,12 +56,6 @@ class SeatsAndPhysicsTest {
         assertTrue(leftLow[1] > 0);
     }
 
-    @Test
-    void betterModelOnlyHasPitchSoRollBecomesTheFlippedForm() {
-        assertArrayEquals(new double[]{-10, 0}, ModelBridge.bmRotation(10, 0, 1), 1e-9);
-        assertArrayEquals(new double[]{0, 0}, ModelBridge.bmRotation(0, 30, 1), 1e-9);      // small roll dropped
-        assertArrayEquals(new double[]{180, 180}, ModelBridge.bmRotation(0, 175, 1), 1e-9); // on the roof
-    }
 
     @Test
     void seatOffsetsTiltWithTheBody() {

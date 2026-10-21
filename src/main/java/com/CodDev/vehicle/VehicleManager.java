@@ -45,22 +45,19 @@ public final class VehicleManager {
     /** Tilt applied by seatLocation during tickParts (0 elsewhere, e.g. when seats are placed at spawn). */
     private double seatPitch, seatRoll;
 
-    /** BetterModel trackers per vehicle base (only used when BetterModel renders the bodies). */
-    private final java.util.Map<java.util.UUID, kr.toxicity.model.api.tracker.EntityTracker> trackers = new java.util.HashMap<>();
+    /** RP Engine model handles per vehicle base (only used when RP Engine renders the bodies). */
+    private final java.util.Map<java.util.UUID, ModelBridge.Handle> trackers = new java.util.HashMap<>();
 
-    /** Make sure a BetterModel tracker shows this vehicle's model (no-op when BetterModel is not active). */
+    /** Make sure the RP Engine model is worn by this vehicle's base (no-op when RP Engine is not active). */
     public void ensureTracker(LivingEntity base, VehicleType type) {
         ModelBridge bridge = plugin.bridge();
         if (bridge == null) return;
         var cur = trackers.get(base.getUniqueId());
         if (cur != null && !cur.isClosed()) return;
         if (!bridge.has(type.model)) return;
-        // the model turns with the base every tick (DriveTask sets its rotation); the LivingEntity's own body yaw never follows
-        // (no AI), so BetterModel's default body-yaw tracking is replaced by the base yaw + model-yaw
-        var t = bridge.attach(base, type.model, () -> {
-            double[] pr = ModelBridge.bmRotation(plugin.task().pitchOf(base), plugin.task().rollOf(base), plugin.getConfig().getDouble("physics.pitch-sign", 1));
-            return new float[]{ (float) pr[0], ModelBridge.modelYaw(base.getLocation().getYaw() + (float) pr[1], type.modelYaw, bridge.yawOffset()) };
-        }, type.scale);
+        // RP Engine draws the worn model where the base faces; DriveTask turns the base by yaw + model-yaw - 180 + offset
+        var t = bridge.attach(base, type.model, null, type.scale);
+        if (t != null) plugin.getLogger().info("RP Engine: vehicle " + type.id + " wears " + bridge.contentId(type.model) + " (scale " + type.scale + ")");
         if (t == null) return;
         trackers.put(base.getUniqueId(), t);
         // a vehicle that existed before BetterModel still carries the item model on its body: hide it, BetterModel draws
@@ -68,7 +65,7 @@ public final class VehicleManager {
         if (body != null && body.getItemStack().getType() != Material.AIR) body.setItemStack(new ItemStack(Material.AIR));
     }
 
-    public kr.toxicity.model.api.tracker.EntityTracker tracker(LivingEntity base) { return plugin.bridge() == null ? null : trackers.get(base.getUniqueId()); }
+    public ModelBridge.Handle tracker(LivingEntity base) { return plugin.bridge() == null ? null : trackers.get(base.getUniqueId()); }
 
     public void closeTracker(java.util.UUID id) {
         var t = trackers.remove(id);
@@ -424,7 +421,7 @@ public final class VehicleManager {
     /** Item + transformation of the body for a type (model fit scale compensated, Blockbench origin at the base). */
     public void applyBody(ItemDisplay d, VehicleType type) {
         if (plugin.bridge() != null) {
-            d.setItemStack(new ItemStack(Material.AIR));   // BetterModel draws the body
+            d.setItemStack(new ItemStack(Material.AIR));   // RP Engine draws the body
             LivingEntity base = entity(d.getPersistentDataContainer().get(baseKey, PersistentDataType.STRING)) instanceof LivingEntity p ? p : null;
             if (base != null) { closeTracker(base.getUniqueId()); ensureTracker(base, type); }
             return;

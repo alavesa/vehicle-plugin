@@ -342,7 +342,8 @@ public final class DriveTask implements Runnable {
         st.momentum = vel.clone();
         if (heli) vel.setY(st.vy); else vel.setY(Math.min(0.1, vyNow));
         base.setVelocity(vel);
-        base.setRotation(yaw, 0);
+        ModelBridge rb = plugin.bridge();
+        base.setRotation(rb != null ? ModelBridge.modelYaw(yaw, type.modelYaw, rb.yawOffset()) : yaw, 0);   // RP Engine: the worn model faces the base
         st.lastVy = heli ? st.vy : 0;
 
         // ---- body orientation: four corner probes find the ground plane, the body follows it; airborne it keeps

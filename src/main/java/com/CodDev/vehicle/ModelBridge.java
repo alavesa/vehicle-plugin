@@ -1,14 +1,7 @@
 package com.CodDev.vehicle;
 
-import kr.toxicity.model.api.BetterModel;
-import kr.toxicity.model.api.animation.AnimationIterator;
-import kr.toxicity.model.api.animation.AnimationModifier;
-import kr.toxicity.model.api.bukkit.BetterModelBukkit;
-import kr.toxicity.model.api.bukkit.platform.BukkitAdapter;
-import kr.toxicity.model.api.data.renderer.ModelRenderer;
-import kr.toxicity.model.api.tracker.EntityTracker;
-import kr.toxicity.model.api.tracker.ModelRotation;
-import kr.toxicity.model.api.tracker.TrackerModifier;
+import ai.resourcepack.engine.RPEnginePlugin;
+import ai.resourcepack.engine.api.ContentId;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Entity;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -20,12 +13,18 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * BetterModel bridge: when BetterModel is installed, the .bbmodel files in plugins/Vehicle/models are mirrored into
- * BetterModel's own models folder (prefixed "vehicle_") so ONE plugin builds the resource pack, and vehicle bodies are
- * rendered + animated by BetterModel (entity animations with Blockbench semantics) instead of our own frame baking.
- * Everything in here touches the BetterModel API, so it is only loaded when {@link #installed()} is true.
+ * Bridge to RP Engine (optional): our .bbmodel files are mirrored into RP Engine's content folder as a pack of their
+ * own (plugins/RPEngine/content/<prefix>/models/<model>.bbmodel - read as BetterModel-style blueprints (RP Engine reads that layout), each file one
+ * bindable item "<prefix>:<model>"), RP Engine builds and serves the resource pack, and the body is a model BOUND to
+ * our base entity (Models.bind) and animated with Models.animate. Nothing here is touched when RP Engine is absent.
  */
 public final class ModelBridge {
+    /** A model worn by one of our entities. */
+    public static final class Handle {
+        public final Entity host; public final String model; private boolean closed;
+        Handle(Entity host, String model) { this.host = host; this.model = model; }
+        public boolean isClosed() { return closed || host == null || !host.isValid(); }
+    }
 
     private final JavaPlugin plugin;
     private final String prefix;
@@ -33,40 +32,47 @@ public final class ModelBridge {
     public ModelBridge(JavaPlugin plugin, String prefix) { this.plugin = plugin; this.prefix = prefix; }
 
     public static boolean installed() {
-        if (Bukkit.getPluginManager().getPlugin("BetterModel") == null) return false;
-        try { Class.forName("kr.toxicity.model.api.BetterModel"); return true; } catch (Throwable t) { return false; }
+        try { Class.forName("ai.resourcepack.engine.api.Models"); } catch (Throwable t) { return false; }
+        return Bukkit.getPluginManager().getPlugin("RPEngine") != null;
     }
 
-    public boolean active() { return installed() && plugin.getConfig().getBoolean("bettermodel.enabled", true); }
+    public boolean active() { return installed() && plugin.getConfig().getBoolean("rpengine.enabled", plugin.getConfig().getBoolean("bettermodel.enabled", true)); }
 
-    /** The BetterModel model name for one of our model files. */
-    public String key(String model) { return prefix + "_" + model.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_"); }
+    private static RPEnginePlugin engine() { return (RPEnginePlugin) Bukkit.getPluginManager().getPlugin("RPEngine"); }
 
-    /** Mirror models/*.bbmodel into BetterModel's models folder; reload BetterModel if anything changed. Returns the change count. */
+    /** The file / path part of one of our model files inside RP Engine. */
+    public String key(String model) { return model.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_"); }
+    /** The RP Engine content id of one of our models: "<prefix>:<model>". */
+    public String contentId(String model) { return prefix + ":" + key(model); }
+    private Optional<ContentId> id(String model) { return ContentId.of(prefix, key(model)); }
+
+    /** Mirror models/*.bbmodel into plugins/RPEngine/content/<prefix>/models; reload RP Engine if anything changed. Returns the change count. */
     public int sync(File modelsDir) {
-        File bm = new File(BetterModel.platform().dataFolder(), "models");
-        bm.mkdirs();
+        File pack = new File(new File(engine().getDataFolder(), "content"), prefix);
+        File rm = new File(pack, "models");
+        rm.mkdirs();
         int changed = 0;
         File[] src = modelsDir.listFiles((d, n) -> n.toLowerCase(Locale.ROOT).endsWith(".bbmodel"));
         java.util.Set<String> wanted = new java.util.HashSet<>();
         if (src != null) for (File f : src) {
             String name = f.getName().substring(0, f.getName().length() - ".bbmodel".length());
-            File target = new File(bm, key(name) + ".bbmodel");
+            File target = new File(rm, key(name) + ".bbmodel");
             wanted.add(target.getName());
             try {
                 byte[] data = prepare(f, name);
                 if (!target.exists() || !java.util.Arrays.equals(data, Files.readAllBytes(target.toPath()))) { Files.write(target.toPath(), data); changed++; }
-            } catch (Exception e) { plugin.getLogger().warning("Could not copy " + f.getName() + " to BetterModel: " + e); }
+            } catch (Exception e) { plugin.getLogger().warning("Could not copy " + f.getName() + " to RP Engine: " + e); }
         }
-        File[] stale = bm.listFiles((d, n) -> n.startsWith(prefix + "_") && n.endsWith(".bbmodel") && !wanted.contains(n));
+        File[] stale = rm.listFiles((d, n) -> n.endsWith(".bbmodel") && !wanted.contains(n));
         if (stale != null) for (File s : stale) if (s.delete()) changed++;
         if (changed > 0) {
-            try { BetterModelBukkit.platform().reload(); } catch (Throwable t) { plugin.getLogger().warning("BetterModel reload failed: " + t); }
+            plugin.getLogger().info("RP Engine: " + changed + " model file(s) changed in content/" + prefix + "/models - reloading RP Engine (rebuilds its pack once).");
+            try { engine().reload(); } catch (Throwable t) { plugin.getLogger().warning("RP Engine reload failed: " + t); }
         }
         return changed;
     }
 
-    // ------------------------------------------------------------------ BetterModel-safe model files
+    // ------------------------------------------------------------------ RP Engine-safe model files
 
     /** A cube rotation a Java item model can hold as-is: one axis only, a multiple of 22.5 within -45..45. */
     public static boolean javaRotation(double[] r) {
@@ -79,16 +85,16 @@ public final class ModelBridge {
         return axes <= 1;
     }
 
-    /** The .bbmodel bytes handed to BetterModel. Every cube whose rotation is not a legal Java element rotation is
+    /** The .bbmodel bytes handed to RP Engine. Every cube whose rotation is not a legal Java element rotation is
      *  moved into its own bone (origin = the cube's own pivot, rotation = the cube's rotation, cube rotation zeroed):
-     *  a bone rotation is exact in BetterModel, a free cube rotation is approximated and comes out deformed. */
+     *  a bone rotation is exact, a free cube rotation may be approximated. */
     byte[] prepare(File f, String name) throws java.io.IOException {
         String text = Files.readString(f.toPath());
         com.google.gson.JsonObject root;
         try { root = com.google.gson.JsonParser.parseString(text).getAsJsonObject(); } catch (Exception e) { return text.getBytes(java.nio.charset.StandardCharsets.UTF_8); }
         java.util.List<String> notes = new java.util.ArrayList<>();
         int wrapped = rewrite(root, notes);
-        for (String n : notes) plugin.getLogger().info("BetterModel model " + key(name) + ": " + n);
+        for (String n : notes) plugin.getLogger().info("RP Engine model " + contentId(name) + ": " + n);
         if (wrapped == 0) return text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         return new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(root).getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
@@ -152,7 +158,7 @@ public final class ModelBridge {
     }
     private static com.google.gson.JsonArray arr(double a, double b, double c) { com.google.gson.JsonArray x = new com.google.gson.JsonArray(); x.add(a); x.add(b); x.add(c); return x; }
 
-    /** /vehicle check <model>: what the BetterModel copy of a model looks like. */
+    /** /vehicle check <model>: what the RP Engine copy of a model looks like. */
     public java.util.List<String> check(File f) {
         java.util.List<String> notes = new java.util.ArrayList<>();
         try {
@@ -167,93 +173,76 @@ public final class ModelBridge {
         return notes;
     }
 
-    public boolean has(String model) { return model != null && !model.isEmpty() && BetterModel.model(key(model)).isPresent(); }
+    public boolean has(String model) {
+        if (model == null || model.isEmpty()) return false;
+        String cid = contentId(model), k = key(model);
+        try { for (String i : engine().models().ids()) if (i.equalsIgnoreCase(cid) || i.equalsIgnoreCase(k)) return true; } catch (Throwable ignored) { }
+        return false;
+    }
+
+    private String modelId(String model) {
+        String cid = contentId(model), k = key(model);
+        try { for (String i : engine().models().ids()) if (i.equalsIgnoreCase(cid) || i.equalsIgnoreCase(k)) return i; } catch (Throwable ignored) { }
+        return cid;
+    }
 
     /** Animation names are matched like our pack does: case-insensitive, spaces/dashes = underscores ("drive_bounce" finds "Drive Bounce"). */
-    private static String norm(String s) { return s == null ? "" : s.trim().toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\\-]+", "_"); }
+    private static String norm(String s) { return s == null ? "" : s.trim().toLowerCase(Locale.ROOT).replaceAll("[\\s\\-]+", "_"); }
 
-    /** The animation's real name in the BetterModel model, or null when the model has no such animation. */
+    /** The animation's real name in the RP Engine model, or null when the model has no such animation. */
     public String resolve(String model, String anim) {
         if (anim == null || anim.isEmpty()) return null;
-        Optional<ModelRenderer> r = BetterModel.model(key(model));
-        if (r.isEmpty()) return null;
-        if (r.get().animation(anim).isPresent()) return anim;
         String want = norm(anim);
-        for (String n : r.get().animations().keySet()) if (norm(n).equals(want)) return n;
+        try { for (String n : engine().models().animationsOf(modelId(model))) if (n.equals(anim) || norm(n).equals(want)) return n; } catch (Throwable ignored) { }
         return null;
     }
 
     public boolean hasAnimation(String model, String anim) { return resolve(model, anim) != null; }
 
     public java.util.Set<String> animations(String model) {
-        Optional<ModelRenderer> r = BetterModel.model(key(model));
-        if (r.isEmpty()) return java.util.Set.of();
-        return new java.util.TreeSet<>(r.get().animations().keySet());
+        try { return new java.util.TreeSet<>(engine().models().animationsOf(modelId(model))); } catch (Throwable t) { return java.util.Set.of(); }
     }
 
-    /** BetterModel turns every model 180 degrees itself (Blockbench north = the entity's front), the same job our
-     *  ItemDisplay pipeline did with model-yaw 180. So the yaw BetterModel gets = entity yaw + (model-yaw - 180) + the
-     *  config nudge `bettermodel.yaw-offset`, normalised to -180..180. */
+    /** The host yaw RP Engine gets = our yaw + (model-yaw - 180) + config `rpengine.yaw-offset`, normalised to -180..180:
+     *  a worn model faces where its host faces, and (like BetterModel) Blockbench north is taken as the model's front. */
     public static float modelYaw(float entityYaw, double modelYaw, double yawOffset) {
         double y = (entityYaw + modelYaw - 180.0 + yawOffset) % 360.0;
         if (y > 180) y -= 360; if (y <= -180) y += 360;
         return (float) y;
     }
 
-    /** BetterModel's default scaler follows the ENTITY's scale attribute - our base Pig carries hitbox/0.9 (2.0 by
-     *  default) for its collision box, which doubled every model. The model must use the type's own scale only. */
+    /** The model scale handed to RP Engine (bind scale) - never the base entity's scale attribute. */
     public static float modelScale(double typeScale) { return (float) Math.max(0.01, Math.min(16.0, typeScale)); }
 
-    public double yawOffset() { return plugin.getConfig().getDouble("bettermodel.yaw-offset", 0.0); }
+    public double yawOffset() { return plugin.getConfig().getDouble("rpengine.yaw-offset", plugin.getConfig().getDouble("bettermodel.yaw-offset", 0.0)); }
 
-    /** Attach the model to an entity; BetterModel then follows the entity. yawSupplier = the ABSOLUTE model yaw per tick
-     *  (see modelYaw), scale = the model scale (independent of the entity's scale attribute). */
-    /** BetterModel only has pitch + yaw. Roll past 90 degrees (on the roof) is shown as pitch 180 - pitch with the yaw
-     *  turned 180 (Rz(180) = Ry(180) Rx(180)); smaller rolls cannot be shown and are dropped. Returns {bmPitch, yawAdd}. */
-    public static double[] bmRotation(double pitch, double roll, double pitchSign) {
-        double p = -pitch * pitchSign;   // entity pitch: positive = nose down
-        if (Math.abs(roll) > 90) return new double[]{180 - p, 180};
-        return new double[]{p, 0};
+    /** Put the model on an entity; RP Engine then follows it. The host's own yaw is what the model faces (see modelYaw). */
+    public Handle attach(Entity base, String model, Supplier<float[]> rotSupplier, double scale) {
+        Optional<ContentId> cid = id(model);
+        if (cid.isEmpty() || !has(model)) return null;
+        try {
+            if (!engine().models().bind(base, cid.get(), modelScale(scale))) return null;
+        } catch (Throwable t) { plugin.getLogger().warning("RP Engine bind failed for " + contentId(model) + ": " + t); return null; }
+        return new Handle(base, model);
     }
 
-    /** rotSupplier = {pitch, absolute yaw} per tick (degrees). */
-    public EntityTracker attach(Entity base, String model, Supplier<float[]> rotSupplier, double scale) {
-        Optional<ModelRenderer> r = BetterModel.model(key(model));
-        if (r.isEmpty()) return null;
-        EntityTracker t = r.get().create(BukkitAdapter.adapt(base), new TrackerModifier(true, false, false));
-        t.scaler(kr.toxicity.model.api.tracker.ModelScaler.value(modelScale(scale)));
-        if (rotSupplier != null) t.rotation(() -> { float[] pr = rotSupplier.get(); return new ModelRotation(pr[0], pr[1]); });
-        return t;
-    }
-
-    private static String resolveOn(EntityTracker t, String anim) {
-        if (t.renderer().animation(anim).isPresent()) return anim;
-        String want = norm(anim);
-        for (String n : t.renderer().animations().keySet()) if (norm(n).equals(want)) return n;
-        return null;
-    }
-
-    public void animate(EntityTracker t, String anim, boolean loop, Supplier<Float> speed) {
+    public void animate(Handle t, String anim, boolean loop, Supplier<Float> speed) {
         if (t == null || t.isClosed() || anim == null || anim.isEmpty()) return;
-        String real = resolveOn(t, anim);
+        String real = resolve(t.model, anim);
         if (real == null) return;
-        t.animate(real, AnimationModifier.builder()
-            .type(loop ? AnimationIterator.Type.LOOP : AnimationIterator.Type.PLAY_ONCE)
-            .speed(() -> speed == null ? 1f : speed.get())
-            .build());
+        try { engine().models().animate(t.host, real); } catch (Throwable ignored) { }
     }
 
-    public void animateHold(EntityTracker t, String anim) {
-        if (t == null || t.isClosed() || anim == null || anim.isEmpty()) return;
-        String real = resolveOn(t, anim);
-        if (real != null) t.animate(real, AnimationModifier.builder().type(AnimationIterator.Type.HOLD_ON_LAST).build());
+    public void animateHold(Handle t, String anim) { animate(t, anim, false, null); }
+
+    public void stop(Handle t, String anim) {
+        if (t == null || t.isClosed()) return;
+        try { engine().models().stopAnimating(t.host); } catch (Throwable ignored) { }
     }
 
-    public void stop(EntityTracker t, String anim) {
-        if (t == null || t.isClosed() || anim == null || anim.isEmpty()) return;
-        String real = resolveOn(t, anim);
-        if (real != null) t.stopAnimation(real);
+    public void close(Handle t) {
+        if (t == null || t.closed) return;
+        t.closed = true;
+        try { if (t.host != null && t.host.isValid()) engine().models().unbind(t.host); } catch (Throwable ignored) { }
     }
-
-    public void close(EntityTracker t) { if (t != null && !t.isClosed()) t.close(); }
 }

@@ -1,20 +1,21 @@
-# BetterModel integration: when the BetterModel plugin is installed, vehicle .bbmodel files are mirrored into
-# plugins/BetterModel/models (prefix vehicle_) so BetterModel builds the one resource pack for the server, and
-# vehicle bodies + driving animations are rendered by BetterModel (entity animations with Blockbench semantics).
+# RP Engine integration (replaces BetterModel): when the RP Engine plugin is installed, vehicle .bbmodel files are
+# mirrored into plugins/RPEngine/content/vehicle/models (each becomes the item "vehicle:<model>"), RP Engine builds and
+# serves the one resource pack, and vehicle bodies are models worn by the vehicle entity (RP Engine bind) with driving
+# animations played through RP Engine (loop/once comes from the animation's own Blockbench setting).
 # Set enabled: false to keep using this plugin's own pack generator and ItemDisplay bodies.
-bettermodel:
+rpengine:
   enabled: true
-  # Extra model yaw (degrees) under BetterModel, on top of each type's model-yaw. BetterModel already turns every
-  # model 180 degrees (Blockbench north = front), exactly what model-yaw 180 did before, so 0 keeps cars facing as
-  # they did; set 180 here if a model comes out backwards. The model scale = the type's scale (the base entity's
-  # own scale attribute, which is the hitbox, is ignored).
+  # Extra model yaw (degrees) under RP Engine, on top of each type's model-yaw: a worn model faces where its host
+  # faces, Blockbench north being its front (what model-yaw 180 meant). 0 keeps cars facing as before; set 180 if a
+  # model comes out backwards. A worn model follows the host's yaw only: the tilt/flip physics (pitch, roll) show on
+  # the plugin's own ItemDisplay bodies, not under RP Engine.
   yaw-offset: 0
 
 # Driving animations per type (types.yml animations: idle/drive/reverse/left/right/reverse_left/reverse_right, set
 # with /vehicle edit <car> animation <state> <name>). Unset states fall back: left/right/reverse -> drive,
-# reverse_left -> reverse -> left -> drive. Under BetterModel the sync also moves every free-rotated cube of a
-# .bbmodel into its own bone (BetterModel approximates free cube rotations and deforms them); /vehicle check <model>
-# shows what the BetterModel copy contains.
+# reverse_left -> reverse -> left -> drive. Under RP Engine the sync also moves every free-rotated cube of a
+# .bbmodel into its own bone (a bone rotation is exact); /vehicle check <model>
+# shows what the RP Engine copy contains.
 
 # Body physics: four corner probes read the ground under the car and the body tilts to that plane (slopes, stairs,
 # ramps); airborne it keeps its spin and the nose follows the flight path; a crash at >= flip-speed blocks/s can roll

@@ -45,10 +45,10 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
                     if (args.length < 2) { err(sender, "Usage: /vehicle check <model>"); return true; }
                     java.io.File f = new java.io.File(new java.io.File(plugin.getDataFolder(), "models"), args[1] + ".bbmodel");
                     if (!f.exists()) { err(sender, "No models/" + args[1] + ".bbmodel"); return true; }
-                    if (plugin.bridge() == null) { err(sender, "BetterModel is not active - /vehicle check is for the BetterModel copy of a model."); return true; }
-                    ok(sender, "BetterModel check of " + args[1] + " (served as " + plugin.bridge().key(args[1]) + "):");
+                    if (plugin.bridge() == null) { err(sender, "RP Engine is not active - /vehicle check is for the RP Engine copy of a model."); return true; }
+                    ok(sender, "RP Engine check of " + args[1] + " (served as " + plugin.bridge().contentId(args[1]) + "):");
                     for (String n : plugin.bridge().check(f)) ok(sender, "  " + n);
-                    ok(sender, "  loaded by BetterModel: " + (plugin.bridge().has(args[1]) ? "yes, animations " + plugin.bridge().animations(args[1]) : "NO - see BetterModel's console warnings"));
+                    ok(sender, "  loaded by RP Engine: " + (plugin.bridge().has(args[1]) ? "yes, animations " + plugin.bridge().animations(args[1]) : "NO - see RP Engine's console warnings"));
                 }
                 case "remove" -> remove(sender, args);
                 case "delete" -> delete(sender, args);
@@ -124,7 +124,7 @@ public final class VehicleCommand implements org.bukkit.command.CommandExecutor,
             case "descent", "descend", "sink" -> t.descent = Math.max(0.1, Math.min(60, Double.parseDouble(v[0])));
             case "model" -> {
                 t.model = v[0];
-                if (!plugin.hasModel(v[0])) ok(s, "Note: no model named '" + v[0] + "' is " + (plugin.bmActive() ? "known to BetterModel yet (file in plugins/Vehicle/models? it is synced + reloaded on restart)" : "in the generated pack") + ". Models: " + String.join(", ", PackGenerator.scanNames(plugin)));
+                if (!plugin.hasModel(v[0])) ok(s, "Note: no model named '" + v[0] + "' is " + (plugin.bmActive() ? "known to RP Engine yet (file in plugins/Vehicle/models? it is synced + reloaded on restart)" : "in the generated pack") + ". Models: " + String.join(", ", PackGenerator.scanNames(plugin)));
             }
             case "speed", "max-speed", "maxspeed" -> t.maxSpeed = Math.max(0.1, Double.parseDouble(v[0]));
             case "acceleration", "accel" -> t.acceleration = Math.max(0.1, Double.parseDouble(v[0]));
