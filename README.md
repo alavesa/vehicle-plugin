@@ -119,3 +119,7 @@ centred, scaled into that range and the display entity scales it back — any si
 Blockbench origin stays at the vehicle's position and 16 px = 1 block. Rotations that are
 multiples of 90° are exact; others are rounded to 22.5° steps on one axis (Java model limit).
 Problems are listed in `generated/pack-report.txt` and on `/vehicle models`.
+
+## RP Engine
+
+Since 2.0 models are built and delivered through RP Engine; see [docs/RPENGINE.md](docs/RPENGINE.md) for how it works and how to set it up.
